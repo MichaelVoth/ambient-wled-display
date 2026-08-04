@@ -1,0 +1,171 @@
+# Copy to /config/packages/ambient_wled.yaml and enable packages in configuration.yaml.
+# Replace example entity IDs to match your Home Assistant installation.
+
+shell_command:
+  ambient_wled_hour_marker: >-
+    python3 /config/ambient_wled/wled_hour_marker.py
+    --wled-url '{{ wled_url }}'
+  ambient_wled_temporary_preset: >-
+    python3 /config/ambient_wled/wled_temporary_preset.py
+    --wled-url '{{ wled_url }}'
+    --preset {{ preset_id }}
+    --duration {{ duration }}
+
+rest_command:
+  ambient_wled_set_preset:
+    url: "{{ wled_url }}/json/state"
+    method: POST
+    content_type: application/json
+    payload: '{"on":true,"ps":{{ preset_id | int }}}'
+
+script:
+  ambient_wled_hour:
+    alias: Ambient WLED Hour Sweep and Marker
+    mode: queued
+    sequence:
+      - action: shell_command.ambient_wled_hour_marker
+        data:
+          wled_url: !secret ambient_wled_base_url
+
+  ambient_wled_temporary_signal:
+    alias: Ambient WLED Temporary Signal
+    mode: queued
+    fields:
+      preset_id:
+        required: true
+        selector:
+          number:
+            min: 1
+            max: 250
+      duration:
+        default: 8
+        selector:
+          number:
+            min: 1
+            max: 60
+    sequence:
+      - action: shell_command.ambient_wled_temporary_preset
+        data:
+          wled_url: !secret ambient_wled_base_url
+          preset_id: "{{ preset_id | int }}"
+          duration: "{{ duration | float(8) }}"
+
+  ambient_wled_calm_ping:
+    alias: Ambient WLED Calm Ping
+    mode: restart
+    sequence:
+      - action: script.ambient_wled_temporary_signal
+        data:
+          preset_id: 13
+          duration: 8
+
+  ambient_wled_workday_party:
+    alias: Ambient WLED Workday Party
+    mode: restart
+    sequence:
+      - action: script.ambient_wled_temporary_signal
+        data:
+          preset_id: 12
+          duration: 12
+
+  ambient_wled_warning:
+    alias: Ambient WLED Warning
+    mode: restart
+    sequence:
+      - action: script.ambient_wled_temporary_signal
+        data:
+          preset_id: 15
+          duration: 8
+
+automation:
+  - id: ambient_wled_hourly_weekdays
+    alias: Ambient WLED Hourly Weekdays
+    triggers:
+      - trigger: time_pattern
+        minutes: "0"
+    conditions:
+      - condition: time
+        after: "08:00:00"
+        before: "17:00:00"
+        weekday: [mon, tue, wed, thu, fri]
+    actions:
+      - action: script.ambient_wled_hour
+    mode: single
+
+  - id: ambient_wled_rain_start
+    alias: Ambient WLED Rain Start
+    triggers:
+      - trigger: state
+        entity_id: weather.home
+        to: [rainy, pouring, lightning-rainy, snowy-rainy, hail]
+        for: "00:05:00"
+    actions:
+      - action: rest_command.ambient_wled_set_preset
+        data:
+          wled_url: !secret ambient_wled_base_url
+          preset_id: 9
+    mode: restart
+
+  - id: ambient_wled_rain_stop
+    alias: Ambient WLED Rain Stop
+    triggers:
+      - trigger: state
+        entity_id: weather.home
+        from: [rainy, pouring, lightning-rainy, snowy-rainy, hail]
+        for: "00:20:00"
+    actions:
+      - action: rest_command.ambient_wled_set_preset
+        data:
+          wled_url: !secret ambient_wled_base_url
+          preset_id: 1
+    mode: restart
+
+  - id: ambient_wled_end_of_workday
+    alias: Ambient WLED End of Workday
+    triggers:
+      - trigger: time
+        at: "16:00:00"
+    conditions:
+      - condition: time
+        weekday: [tue, wed, thu, fri]
+    actions:
+      - action: script.ambient_wled_workday_party
+    mode: single
+
+  - id: ambient_wled_lunch_reminders
+    alias: Ambient WLED Lunch Reminders
+    triggers:
+      - trigger: time
+        at: "12:00:00"
+      - trigger: time
+        at: "12:10:00"
+      - trigger: time
+        at: "12:20:00"
+    conditions:
+      - condition: time
+        weekday: [mon, tue, wed, thu, fri]
+    actions:
+      - action: script.ambient_wled_calm_ping
+    mode: single
+
+  - id: ambient_wled_service_unhealthy
+    alias: Ambient WLED Service Unhealthy
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.example_service_status
+        to: "off"
+        for: "00:00:20"
+    actions:
+      - action: script.ambient_wled_warning
+    mode: restart
+
+  - id: ambient_wled_github_build_failed
+    alias: Ambient WLED GitHub Build Failed
+    triggers:
+      - trigger: webhook
+        webhook_id: !secret ambient_wled_github_webhook_id
+        allowed_methods: [POST]
+        local_only: false
+    actions:
+      - action: script.ambient_wled_warning
+    mode: restart

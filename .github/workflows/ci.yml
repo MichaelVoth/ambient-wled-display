@@ -1,0 +1,38 @@
+name: Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m unittest discover -s tests -v
+      - name: Parse example YAML
+        run: |
+          python - <<'PY'
+          import pathlib
+          import yaml
+
+          class Loader(yaml.SafeLoader):
+              pass
+
+          Loader.add_constructor("!secret", lambda loader, node: loader.construct_scalar(node))
+          for path in pathlib.Path(".").rglob("*.yaml"):
+              with path.open(encoding="utf-8") as stream:
+                  yaml.load(stream, Loader=Loader)
+              print(f"Parsed {path}")
+          PY
+      - name: Check shell scripts
+        run: |
+          bash -n wled/install-presets.sh
+          bash -n ledfx/ledfx-control.sh

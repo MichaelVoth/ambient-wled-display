@@ -1,0 +1,12 @@
+# Add this job to a workflow that should notify Home Assistant when it fails.
+# Store the complete Home Assistant webhook URL in the HA_WLED_WEBHOOK_URL secret.
+jobs:
+  notify-home-assistant:
+    if: ${{ failure() }}
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Signal failed build
+        env:
+          WEBHOOK_URL: ${{ secrets.HA_WLED_WEBHOOK_URL }}
+        run: curl --fail --silent --show-error --request POST "$WEBHOOK_URL"

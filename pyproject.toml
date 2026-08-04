@@ -1,0 +1,9 @@
+[project]
+name = "ambient-wled-display"
+version = "0.1.0"
+description = "Use WLED as a state-safe ambient information display with Home Assistant and LedFx."
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+[tool.ruff]
+line-length = 110

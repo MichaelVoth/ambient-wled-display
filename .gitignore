@@ -1,0 +1,25 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Home Assistant private/runtime data
+secrets.yaml
+home-assistant_v2.db*
+.storage/
+backups/
+*.tar
+*.tgz
+
+# Device and application runtime exports
+*wled-backup*
+presets.json
+cfg.json
+LedFx*.log
+ledfx.log
