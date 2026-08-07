@@ -31,9 +31,11 @@ Home Assistant automation modes matter. Use `queued` for short signals that
 must be seen, `restart` when only the newest state matters, and `single` for
 scheduled events that should not overlap themselves.
 
-## Why the hourly gaps use two segments
+## Why the hourly gaps use explicit segments
 
-One WLED segment covers only the marked portion of the strip. Its grouping and
-spacing values repeat a lit run followed by a narrow dark gap. A second segment
-covers the remainder normally. This produces up to twelve markers without
-using one WLED segment per lit and dark region.
+Some animated effects do not render WLED's grouping and spacing gaps clearly.
+The controller therefore builds each gap as a small, solid-black segment and
+keeps the original effect in every section between gaps. This makes the hour
+readable even over animated palettes. Twelve bars need at most 25 segments, and
+the controller checks the device's advertised segment limit before changing
+the display.

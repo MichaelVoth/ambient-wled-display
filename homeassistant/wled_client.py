@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -73,4 +74,5 @@ def restore_state(base_url: str, state: dict[str, Any]) -> None:
     request_json(base_url, "/json/state", clean_state(state))
     preset = state.get("ps")
     if isinstance(preset, int) and preset > 0:
+        time.sleep(max(0, float(state.get("transition", 0))) / 10 + 0.1)
         request_json(base_url, "/json/state", {"ps": preset})

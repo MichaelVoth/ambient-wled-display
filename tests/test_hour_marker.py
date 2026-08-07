@@ -1,11 +1,12 @@
 import pathlib
 import sys
 import unittest
+from types import SimpleNamespace
 
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "homeassistant"))
 
-from wled_hour_marker import build_marker_segments, hour_count  # noqa: E402
+from wled_hour_marker import build_marker_segments, hour_count, marker_payload  # noqa: E402
 
 
 class HourMarkerTests(unittest.TestCase):
@@ -15,24 +16,60 @@ class HourMarkerTests(unittest.TestCase):
         self.assertEqual(hour_count(17), 5)
 
     def test_five_pm_grows_from_high_index_top(self):
-        marker, remainder = build_marker_segments(300, 17, 9, 2, True)
-        self.assertEqual((marker["start"], marker["stop"]), (255, 300))
-        self.assertEqual((marker["grp"], marker["spc"]), (7, 2))
-        self.assertEqual((remainder["start"], remainder["stop"]), (0, 255))
+        segments = build_marker_segments(300, 17, 12, 4, True)
+        gaps = [segment for segment in segments if segment["kind"] == "gap"]
+        self.assertEqual(len(gaps), 5)
+        self.assertEqual((segments[0]["start"], segments[0]["stop"]), (0, 240))
+        self.assertEqual((gaps[-1]["start"], gaps[-1]["stop"]), (296, 300))
 
     def test_low_index_orientation(self):
-        marker, remainder = build_marker_segments(300, 3, 9, 2, False)
-        self.assertEqual((marker["start"], marker["stop"]), (0, 27))
-        self.assertEqual((remainder["start"], remainder["stop"]), (27, 300))
+        segments = build_marker_segments(300, 3, 12, 4, False)
+        gaps = [segment for segment in segments if segment["kind"] == "gap"]
+        self.assertEqual(len(gaps), 3)
+        self.assertEqual((gaps[0]["start"], gaps[0]["stop"]), (0, 4))
+        self.assertEqual((segments[-1]["start"], segments[-1]["stop"]), (36, 300))
 
     def test_marker_is_clamped_to_strip(self):
-        marker, remainder = build_marker_segments(20, 12, 9, 2, True)
-        self.assertEqual((marker["start"], marker["stop"]), (0, 20))
-        self.assertEqual((remainder["start"], remainder["stop"]), (0, 0))
+        segments = build_marker_segments(20, 12, 9, 2, True)
+        self.assertEqual(segments[0]["start"], 0)
+        self.assertEqual(segments[-1]["stop"], 20)
+        self.assertTrue(all(segment["stop"] > segment["start"] for segment in segments))
 
     def test_invalid_spacing_is_rejected(self):
         with self.assertRaises(ValueError):
             build_marker_segments(300, 5, 2, 2, True)
+
+    def test_marker_payload_makes_explicit_black_bars(self):
+        state = {"seg": [{"on": True, "fx": 88, "pal": 1, "col": [[255, 160, 0]]}]}
+        args = SimpleNamespace(
+            led_count=278,
+            hour=17,
+            pixels_per_mark=12,
+            gap_width=4,
+            top_at_high_index=True,
+            max_segments=32,
+            marker_transition=5,
+        )
+        payload = marker_payload(state, args)
+        active = [segment for segment in payload["seg"] if segment.get("stop", 0)]
+        gaps = [segment for segment in active if segment.get("col") == [[0, 0, 0]] * 3]
+        self.assertEqual([(gap["start"], gap["stop"]) for gap in gaps], [
+            (226, 230), (238, 242), (250, 254), (262, 266), (274, 278)
+        ])
+
+    def test_marker_rejects_device_with_too_few_segments(self):
+        state = {"seg": [{"on": True, "fx": 0, "col": [[255, 255, 255]]}]}
+        args = SimpleNamespace(
+            led_count=278,
+            hour=12,
+            pixels_per_mark=12,
+            gap_width=4,
+            top_at_high_index=True,
+            max_segments=16,
+            marker_transition=5,
+        )
+        with self.assertRaisesRegex(ValueError, "supports 16"):
+            marker_payload(state, args)
 
 
 if __name__ == "__main__":
