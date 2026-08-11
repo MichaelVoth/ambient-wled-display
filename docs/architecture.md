@@ -34,8 +34,9 @@ scheduled events that should not overlap themselves.
 ## Why the hourly gaps use explicit segments
 
 Some animated effects do not render WLED's grouping and spacing gaps clearly.
-The controller therefore builds each gap as a small, solid-black segment and
-keeps the original effect in every section between gaps. This makes the hour
-readable even over animated palettes. Twelve bars need at most 25 segments, and
-the controller checks the device's advertised segment limit before changing
-the display.
+The controller therefore builds each gap as a solid-black segment and renders
+the colored sections with WLED's Colorful effect while retaining the active
+palette and colors. This avoids the black startup frames produced when effects
+such as Candle or Palette are restarted inside many small segments. Twelve
+bars need at most 25 segments, and the controller checks the device's
+advertised segment limit before changing the display.

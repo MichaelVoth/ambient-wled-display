@@ -86,6 +86,16 @@ def marker_payload(state: dict[str, Any], args: argparse.Namespace) -> dict[str,
         segment["on"] = True
         if kind == "content":
             segment.update(appearance)
+            segment.update({
+                "fx": args.marker_effect,
+                "sx": args.marker_speed,
+                "ix": args.marker_intensity,
+                "c1": 0,
+                "frz": False,
+                "o1": False,
+                "o2": False,
+                "o3": False,
+            })
         else:
             segment.update({"bri": 255, "fx": 0, "pal": 0, "col": [[0, 0, 0], [0, 0, 0], [0, 0, 0]]})
     if len(segments) > args.max_segments:
@@ -121,18 +131,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wled-url", default=os.getenv("WLED_URL", "http://wled.local"))
     parser.add_argument("--hour", type=int, default=dt.datetime.now().hour)
     parser.add_argument("--led-count", type=int, default=int(os.getenv("WLED_LED_COUNT", "0")))
-    parser.add_argument("--pixels-per-mark", type=int, default=int(os.getenv("WLED_PIXELS_PER_MARK", "12")))
-    parser.add_argument("--gap-width", type=int, default=int(os.getenv("WLED_GAP_WIDTH", "4")))
+    parser.add_argument("--pixels-per-mark", type=int, default=int(os.getenv("WLED_PIXELS_PER_MARK", "18")))
+    parser.add_argument("--gap-width", type=int, default=int(os.getenv("WLED_GAP_WIDTH", "8")))
     parser.add_argument("--top-at-high-index", action=argparse.BooleanOptionalAction,
                         default=env_bool("WLED_TOP_AT_HIGH_INDEX", True))
     parser.add_argument("--sweep-effect", type=int, default=6, help="WLED effect ID used for the sweep")
     parser.add_argument("--sweep-speed", type=int, default=50)
     parser.add_argument("--sweep-intensity", type=int, default=180)
     parser.add_argument("--sweep-seconds", type=float, default=8.0)
-    parser.add_argument("--marker-seconds", type=float, default=10.0)
+    parser.add_argument("--marker-effect", type=int, default=34, help="Color-preserving marker renderer effect ID")
+    parser.add_argument("--marker-speed", type=int, default=128)
+    parser.add_argument("--marker-intensity", type=int, default=112)
+    parser.add_argument("--marker-seconds", type=float, default=20.0)
     parser.add_argument("--transition", type=int, default=7, help="Sweep transition in 100 ms units")
     parser.add_argument("--marker-transition", type=int, default=5, help="Bar fade-in in 100 ms units")
-    parser.add_argument("--restore-transition", type=int, default=20, help="Restoration fade in 100 ms units")
+    parser.add_argument("--restore-transition", type=int, default=30, help="Restoration fade in 100 ms units")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
