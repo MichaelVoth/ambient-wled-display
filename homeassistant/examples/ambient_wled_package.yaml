@@ -20,7 +20,7 @@ rest_command:
 
 script:
   ambient_wled_hour:
-    alias: Ambient WLED Hour Sweep and Marker
+    alias: Ambient WLED Hour Sweep and Bell Tolls
     mode: queued
     sequence:
       - action: shell_command.ambient_wled_hour_marker

@@ -13,13 +13,13 @@ This project combines:
 
 The central idea is to treat position, color, motion, and time as a compact
 visual language. For example, the included hourly display performs a sweep,
-then places one gap per hour at the physical top of a vertical strip and grows
-downward. It preserves the current colors and restores the exact prior WLED
-state afterward.
+turns the strip completely dark, then tolls the hour by adding one illuminated
+dot per second near the physical top of a vertical strip. It holds the completed
+count for five seconds and fades back to the exact prior WLED state.
 
 ## Features
 
-- Top-down 12-hour gap display
+- Top-down 12-hour cumulative bell-toll display
 - Current-palette preservation during neutral information displays
 - Automatic pause while WLED realtime input such as LedFx is active
 - Reusable temporary-preset controller with full state restoration
