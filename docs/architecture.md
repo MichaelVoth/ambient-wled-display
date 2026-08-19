@@ -50,8 +50,8 @@ The controller reads physical output boundaries from `/json/cfg`. Each output
 is swept independently but simultaneously, and each receives the same toll
 pattern near its own top. WLED's individual-pixel JSON control allows the hour
 to use one segment per physical output, so two 139-LED wall strips consume only
-two segments even at twelve o'clock. With the default spacing, twelve tolls
-occupy the top 34 LEDs of each output.
+two segments even at twelve o'clock. With the default three-dark-LED spacing,
+twelve tolls occupy the top 45 LEDs of each output.
 
 The controller snapshots the complete original state before it begins and fades
 back to that snapshot after holding the completed hour for five seconds. Before

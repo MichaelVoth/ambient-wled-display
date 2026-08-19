@@ -258,7 +258,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hour", type=int, default=dt.datetime.now().hour)
     parser.add_argument("--led-count", type=int, default=int(os.getenv("WLED_LED_COUNT", "0")))
     parser.add_argument("--top-offset", type=int, default=int(os.getenv("WLED_TOP_OFFSET", "5")))
-    parser.add_argument("--dot-gap", type=int, default=int(os.getenv("WLED_DOT_GAP", "2")))
+    parser.add_argument("--dot-gap", type=int, default=int(os.getenv("WLED_DOT_GAP", "3")))
     parser.add_argument("--top-at-high-index", action=argparse.BooleanOptionalAction,
                         default=env_bool("WLED_TOP_AT_HIGH_INDEX", True))
     parser.add_argument("--sweep-seconds", type=float, default=8.0)

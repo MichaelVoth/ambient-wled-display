@@ -27,7 +27,7 @@ class HourMarkerTests(unittest.TestCase):
             "outputs": [(0, 139), (139, 278)],
             "hour": 15,
             "top_offset": 5,
-            "dot_gap": 2,
+            "dot_gap": 3,
             "top_at_high_index": True,
             "max_segments": 32,
             "blackout_transition": 0,
@@ -53,15 +53,15 @@ class HourMarkerTests(unittest.TestCase):
         self.assertEqual(configured_outputs({}, 278), [(0, 278)])
 
     def test_three_pm_tolls_from_each_output_top(self):
-        self.assertEqual(toll_positions(139, 15, 5, 2, True), [133, 130, 127])
+        self.assertEqual(toll_positions(139, 15, 5, 3, True), [133, 129, 125])
 
     def test_low_index_orientation(self):
         self.assertEqual(toll_positions(139, 15, 5, 2, False), [5, 8, 11])
 
-    def test_noon_fits_inside_top_34_leds_of_each_output(self):
-        positions = toll_positions(139, 12, 5, 2, True)
+    def test_noon_fits_inside_top_45_leds_of_each_output(self):
+        positions = toll_positions(139, 12, 5, 3, True)
         self.assertEqual(len(positions), 12)
-        self.assertEqual((min(positions), max(positions)), (100, 133))
+        self.assertEqual((min(positions), max(positions)), (89, 133))
 
     def test_toll_that_does_not_fit_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "does not fit"):
@@ -77,8 +77,8 @@ class HourMarkerTests(unittest.TestCase):
         expected_pixels = [
             0, 139, [0, 0, 0],
             133, [10, 20, 30],
-            130, [10, 20, 30],
-            127, [10, 20, 30],
+            129, [10, 20, 30],
+            125, [10, 20, 30],
         ]
         self.assertEqual(active[0]["i"], expected_pixels)
         self.assertEqual(active[1]["i"], expected_pixels)
