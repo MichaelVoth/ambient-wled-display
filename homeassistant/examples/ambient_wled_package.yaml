@@ -78,16 +78,16 @@ script:
           duration: 8
 
 automation:
-  - id: ambient_wled_hourly_weekdays
-    alias: Ambient WLED Hourly Weekdays
+  - id: ambient_wled_hourly_clock
+    alias: Ambient WLED Hourly Clock
     triggers:
       - trigger: time_pattern
         minutes: "0"
     conditions:
-      - condition: time
-        after: "08:00:00"
-        before: "17:00:00"
-        weekday: [mon, tue, wed, thu, fri]
+      - condition: template
+        value_template: >-
+          {{ now().hour not in [0, 6]
+             and not (now().weekday() in [1, 2, 3, 4] and now().hour == 16) }}
     actions:
       - action: script.ambient_wled_hour
     mode: single
@@ -136,7 +136,7 @@ automation:
     alias: Ambient WLED Lunch Reminders
     triggers:
       - trigger: time
-        at: "12:00:00"
+        at: "12:01:00"
       - trigger: time
         at: "12:10:00"
       - trigger: time

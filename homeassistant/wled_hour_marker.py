@@ -95,13 +95,27 @@ def sweep_payload(state: dict[str, Any], args: argparse.Namespace) -> dict[str, 
     return {"on": True, "transition": args.transition, "seg": [segment]}
 
 
+def display_matches(state: dict[str, Any], payload: dict[str, Any]) -> bool:
+    """Return true only while WLED still shows the state this controller posted."""
+    actual = {int(segment.get("id", 0)): segment for segment in state.get("seg", []) if segment.get("stop", 0)}
+    expected = {int(segment.get("id", 0)): segment for segment in payload.get("seg", []) if segment.get("stop", 0)}
+    if set(actual) != set(expected):
+        return False
+    for segment_id, wanted in expected.items():
+        shown = actual[segment_id]
+        for key in ("start", "stop", "fx", "col"):
+            if key in wanted and shown.get(key) != wanted[key]:
+                return False
+    return True
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wled-url", default=os.getenv("WLED_URL", "http://wled.local"))
     parser.add_argument("--hour", type=int, default=dt.datetime.now().hour)
     parser.add_argument("--led-count", type=int, default=int(os.getenv("WLED_LED_COUNT", "0")))
-    parser.add_argument("--pixels-per-mark", type=int, default=int(os.getenv("WLED_PIXELS_PER_MARK", "18")))
-    parser.add_argument("--gap-width", type=int, default=int(os.getenv("WLED_GAP_WIDTH", "8")))
+    parser.add_argument("--pixels-per-mark", type=int, default=int(os.getenv("WLED_PIXELS_PER_MARK", "22")))
+    parser.add_argument("--gap-width", type=int, default=int(os.getenv("WLED_GAP_WIDTH", "10")))
     parser.add_argument("--top-at-high-index", action=argparse.BooleanOptionalAction,
                         default=env_bool("WLED_TOP_AT_HIGH_INDEX", True))
     parser.add_argument("--sweep-effect", type=int, default=6, help="WLED effect ID used for the sweep")
@@ -136,14 +150,24 @@ def main() -> int:
             print(json.dumps({"sweep": sweep, "marker": marker, "restore": state}, indent=2))
             return 0
         changed = False
+        owns_display = False
         try:
             request_json(args.wled_url, "/json/state", sweep)
             changed = True
+            owns_display = True
             time.sleep(args.sweep_seconds)
+            if not display_matches(get_state(args.wled_url), sweep):
+                owns_display = False
+                print("Hourly display yielded to another WLED change during the sweep.")
+                return 0
             request_json(args.wled_url, "/json/state", marker)
             time.sleep(args.marker_seconds)
+            if not display_matches(get_state(args.wled_url), marker):
+                owns_display = False
+                print("Hourly display yielded to another WLED change during the hour readout.")
+                return 0
         finally:
-            if changed:
+            if changed and owns_display:
                 restore = copy.deepcopy(state)
                 restore["transition"] = args.restore_transition
                 restore_state(args.wled_url, restore)

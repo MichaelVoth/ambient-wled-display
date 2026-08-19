@@ -31,6 +31,12 @@ Home Assistant automation modes matter. Use `queued` for short signals that
 must be seen, `restart` when only the newest state matters, and `single` for
 scheduled events that should not overlap themselves.
 
+Scheduled collisions should be resolved before they reach WLED. The example
+gives midnight shutdown, 6 AM startup, and the Tuesday-Friday 4 PM workday
+celebration exclusive ownership of those times. The hourly controller also
+checks that it still owns the displayed state before restoring; an alert or
+weather change that arrives mid-animation is therefore allowed to take over.
+
 ## Why the hourly gaps use explicit segments
 
 Some animated effects do not render WLED's grouping and spacing gaps clearly.
