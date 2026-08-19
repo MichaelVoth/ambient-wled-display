@@ -19,7 +19,8 @@ class HourMarkerTests(unittest.TestCase):
         segments = build_marker_segments(300, 17, 18, 8, True)
         gaps = [segment for segment in segments if segment["kind"] == "gap"]
         self.assertEqual(len(gaps), 5)
-        self.assertEqual((segments[0]["start"], segments[0]["stop"]), (0, 210))
+        self.assertEqual((segments[0]["start"], segments[0]["stop"]), (0, 220))
+        self.assertEqual((gaps[0]["start"], gaps[0]["stop"]), (220, 228))
         self.assertEqual((gaps[-1]["start"], gaps[-1]["stop"]), (292, 300))
 
     def test_low_index_orientation(self):
@@ -27,7 +28,7 @@ class HourMarkerTests(unittest.TestCase):
         gaps = [segment for segment in segments if segment["kind"] == "gap"]
         self.assertEqual(len(gaps), 3)
         self.assertEqual((gaps[0]["start"], gaps[0]["stop"]), (0, 8))
-        self.assertEqual((segments[-1]["start"], segments[-1]["stop"]), (54, 300))
+        self.assertEqual((gaps[-1]["start"], gaps[-1]["stop"]), (36, 44))
 
     def test_marker_is_clamped_to_strip(self):
         segments = build_marker_segments(20, 12, 9, 2, True)
@@ -49,9 +50,6 @@ class HourMarkerTests(unittest.TestCase):
             top_at_high_index=True,
             max_segments=32,
             marker_transition=5,
-            marker_effect=34,
-            marker_speed=128,
-            marker_intensity=112,
         )
         payload = marker_payload(state, args)
         active = [segment for segment in payload["seg"] if segment.get("stop", 0)]
@@ -60,9 +58,8 @@ class HourMarkerTests(unittest.TestCase):
             (198, 206), (216, 224), (234, 242), (252, 260), (270, 278)
         ])
         content = [segment for segment in active if segment not in gaps]
-        self.assertTrue(all(segment.get("fx") == 34 for segment in content))
-        self.assertTrue(all(segment.get("pal") == 1 for segment in content))
-        self.assertTrue(all(segment.get("frz") is False for segment in content))
+        self.assertEqual(len(content), 5)
+        self.assertTrue(all(segment.get("fx") == 0 for segment in content))
 
     def test_marker_rejects_device_with_too_few_segments(self):
         state = {"seg": [{"on": True, "fx": 0, "col": [[255, 255, 255]]}]}
@@ -72,13 +69,10 @@ class HourMarkerTests(unittest.TestCase):
             pixels_per_mark=18,
             gap_width=8,
             top_at_high_index=True,
-            max_segments=16,
+            max_segments=4,
             marker_transition=5,
-            marker_effect=34,
-            marker_speed=128,
-            marker_intensity=112,
         )
-        with self.assertRaisesRegex(ValueError, "supports 16"):
+        with self.assertRaisesRegex(ValueError, "supports 4"):
             marker_payload(state, args)
 
 

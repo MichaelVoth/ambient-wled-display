@@ -35,49 +35,28 @@ def build_marker_segments(
     if gap_width >= pixels_per_mark:
         raise ValueError("gap width must be smaller than pixels per mark")
 
-    count = hour_count(hour)
-    marker_length = min(led_count, count * pixels_per_mark)
-    segments: list[dict[str, Any]] = []
-    segment_id = 0
+    gaps: list[tuple[int, int]] = []
+    for number in range(hour_count(hour)):
+        if top_at_high_index:
+            stop = led_count - number * pixels_per_mark
+            start = max(0, stop - gap_width)
+        else:
+            start = number * pixels_per_mark
+            stop = min(led_count, start + gap_width)
+        if 0 <= start < stop <= led_count:
+            gaps.append((start, stop))
 
-    if top_at_high_index:
-        cursor = led_count - marker_length
-        if cursor > 0:
-            segments.append({"id": segment_id, "start": 0, "stop": cursor, "kind": "content"})
-            segment_id += 1
-        while cursor < led_count:
-            content_stop = min(led_count, cursor + pixels_per_mark - gap_width)
-            if content_stop > cursor:
-                segments.append({"id": segment_id, "start": cursor, "stop": content_stop, "kind": "content"})
-                segment_id += 1
-            gap_stop = min(led_count, content_stop + gap_width)
-            if gap_stop > content_stop:
-                segments.append({"id": segment_id, "start": content_stop, "stop": gap_stop, "kind": "gap"})
-                segment_id += 1
-            cursor = gap_stop
-    else:
-        cursor = 0
-        while cursor < marker_length:
-            gap_stop = min(marker_length, cursor + gap_width)
-            segments.append({"id": segment_id, "start": cursor, "stop": gap_stop, "kind": "gap"})
-            segment_id += 1
-            content_stop = min(marker_length, cursor + pixels_per_mark)
-            if content_stop > gap_stop:
-                segments.append({"id": segment_id, "start": gap_stop, "stop": content_stop, "kind": "content"})
-                segment_id += 1
-            cursor = content_stop
-        if marker_length < led_count:
-            segments.append({"id": segment_id, "start": marker_length, "stop": led_count, "kind": "content"})
+    boundaries = sorted({0, led_count, *(point for gap in gaps for point in gap)})
+    segments: list[dict[str, Any]] = []
+    for start, stop in zip(boundaries, boundaries[1:]):
+        kind = "gap" if any(start >= gap_start and stop <= gap_stop for gap_start, gap_stop in gaps) else "content"
+        segments.append({"id": len(segments), "start": start, "stop": stop, "kind": kind})
     return segments
 
 
 def marker_payload(state: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     source = next((segment for segment in state.get("seg", []) if segment.get("on", True)), {})
-    appearance = {
-        key: source[key]
-        for key in ("bri", "cct", "col", "fx", "sx", "ix", "pal", "c1", "c2", "c3", "rev", "mi")
-        if key in source
-    }
+    color = copy.deepcopy(source.get("col", [[255, 160, 0], [0, 0, 0], [0, 0, 0]]))
     segments = build_marker_segments(
         args.led_count, args.hour, args.pixels_per_mark, args.gap_width, args.top_at_high_index
     )
@@ -85,17 +64,7 @@ def marker_payload(state: dict[str, Any], args: argparse.Namespace) -> dict[str,
         kind = segment.pop("kind")
         segment["on"] = True
         if kind == "content":
-            segment.update(appearance)
-            segment.update({
-                "fx": args.marker_effect,
-                "sx": args.marker_speed,
-                "ix": args.marker_intensity,
-                "c1": 0,
-                "frz": False,
-                "o1": False,
-                "o2": False,
-                "o3": False,
-            })
+            segment.update({"bri": 255, "fx": 0, "pal": 0, "col": color})
         else:
             segment.update({"bri": 255, "fx": 0, "pal": 0, "col": [[0, 0, 0], [0, 0, 0], [0, 0, 0]]})
     if len(segments) > args.max_segments:
@@ -139,9 +108,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sweep-speed", type=int, default=50)
     parser.add_argument("--sweep-intensity", type=int, default=180)
     parser.add_argument("--sweep-seconds", type=float, default=8.0)
-    parser.add_argument("--marker-effect", type=int, default=34, help="Color-preserving marker renderer effect ID")
-    parser.add_argument("--marker-speed", type=int, default=128)
-    parser.add_argument("--marker-intensity", type=int, default=112)
     parser.add_argument("--marker-seconds", type=float, default=20.0)
     parser.add_argument("--transition", type=int, default=7, help="Sweep transition in 100 ms units")
     parser.add_argument("--marker-transition", type=int, default=5, help="Bar fade-in in 100 ms units")
