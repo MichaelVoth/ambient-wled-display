@@ -17,9 +17,14 @@ turns the strip completely dark, then tolls the hour by adding one illuminated
 dot per second near the physical top of a vertical strip. It holds the completed
 count for five seconds and fades back to the exact prior WLED state.
 
+When one controller drives multiple physical LED outputs, the hourly display
+discovers those output boundaries from WLED and mirrors the sweep and tolls on
+each strip independently.
+
 ## Features
 
 - Top-down 12-hour cumulative bell-toll display
+- Automatic multi-output strip discovery and synchronized rendering
 - Current-palette preservation during neutral information displays
 - Automatic pause while WLED realtime input such as LedFx is active
 - Reusable temporary-preset controller with full state restoration

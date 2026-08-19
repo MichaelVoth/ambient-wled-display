@@ -37,14 +37,21 @@ celebration exclusive ownership of those times. The hourly controller also
 checks that it still owns the displayed state before restoring; an alert or
 weather change that arrives mid-animation is therefore allowed to take over.
 
-## Why the hourly toll uses explicit segments
+## Why the hourly display uses rendered pixels
 
-The controller gives every phase a complete, deterministic strip layout. The
-sweep first uses the current segment's color and palette, then an explicit
-full-strip black state guarantees total darkness. Each one-second toll replaces
-that layout with a black strip containing one more single-pixel dot near the
-physical top. Twelve tolls occupy only the top 34 LEDs with the default spacing
-and require 25 segments, below the common WLED limit of 32.
+WLED effects are continuous loops, so a fixed delay cannot guarantee that a
+one-way sweep has reached the bottom before the next phase begins. The hourly
+controller instead captures WLED's rendered RGB framebuffer, freezes that exact
+visible palette, and progressively blacks the pixels from each physical top to
+its bottom over a fixed duration. The last sweep step is therefore guaranteed
+to be the fully dark frame.
+
+The controller reads physical output boundaries from `/json/cfg`. Each output
+is swept independently but simultaneously, and each receives the same toll
+pattern near its own top. WLED's individual-pixel JSON control allows the hour
+to use one segment per physical output, so two 139-LED wall strips consume only
+two segments even at twelve o'clock. With the default spacing, twelve tolls
+occupy the top 34 LEDs of each output.
 
 The controller snapshots the complete original state before it begins and fades
 back to that snapshot after holding the completed hour for five seconds. Before
