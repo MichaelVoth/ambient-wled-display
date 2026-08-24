@@ -42,6 +42,7 @@ class RendererEngine:
         self.started_at = time.monotonic()
         self.last_frame_at = 0.0
         self.last_error: str | None = None
+        self.output_error: str | None = None
         self.last_event: dict[str, Any] | None = None
         self.return_mode_after_events: str | None = None
         self.output_validation: dict[str, dict[str, Any]] = {}
@@ -50,6 +51,13 @@ class RendererEngine:
     def start(self) -> None:
         if self.thread and self.thread.is_alive():
             return
+        if self.mode == "renderer":
+            try:
+                self._validate_outputs()
+            except ValueError as exc:
+                self.mode = "preview"
+                self.output_error = str(exc)
+                self._record("startup_output_rejected", error=self.output_error)
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._run, name="ambient-renderer", daemon=True)
         self.thread.start()
@@ -265,7 +273,7 @@ class RendererEngine:
             event = self._event_summary(self.active_event, now) if self.active_event else None
             queue = [self._event_summary(item, now) for item in self.event_queue]
             return {
-                "ok": self.last_error is None,
+                "ok": self.last_error is None and self.output_error is None,
                 "mode": self.mode,
                 "fps_target": self.config.fps,
                 "fps_average": round(self.frames_rendered / max(0.001, now - self.started_at), 2),
@@ -282,6 +290,7 @@ class RendererEngine:
                 "queued_events": queue,
                 "last_event": self.last_event,
                 "last_error": self.last_error,
+                "output_error": self.output_error,
                 "devices": [
                     {
                         "id": device.id,
@@ -341,7 +350,9 @@ class RendererEngine:
         with self.lock:
             self.output_validation = results
         if failures:
-            raise ValueError("WLED preflight failed: " + "; ".join(failures))
+            self.output_error = "WLED preflight failed: " + "; ".join(failures)
+            raise ValueError(self.output_error)
+        self.output_error = None
         self._record("outputs_validated", devices=list(results))
 
     def frame_snapshot(self) -> dict[str, list[str]]:

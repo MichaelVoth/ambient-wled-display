@@ -125,7 +125,7 @@
         document.querySelector('#modeText').textContent=status.mode;
         document.querySelector('#mode').value=status.mode;
         document.querySelector('#eventText').textContent=status.active_event?`${status.active_event.kind}: ${status.active_event.phase}`:'None';
-        document.querySelector('#details').textContent=JSON.stringify({layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,frames_sent:status.frames_sent,temporary_ownership:status.output_lease_return_mode,output_validation:status.output_validation},null,2);
+        document.querySelector('#details').textContent=JSON.stringify({layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,temporary_ownership:status.output_lease_return_mode,output_validation:status.output_validation},null,2);
         draw(frame.frames);
       } catch(error) { document.querySelector('#health').textContent=error.message; document.querySelector('#health').className='bad'; }
     }

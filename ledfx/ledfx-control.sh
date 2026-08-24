@@ -6,6 +6,7 @@ LEDFX_CONFIG_DIR="${LEDFX_CONFIG_DIR:-$HOME/.ledfx}"
 LEDFX_VIRTUAL_ID="${LEDFX_VIRTUAL_ID:-office-wled}"
 LEDFX_AUDIO_DEVICE_MATCH="${LEDFX_AUDIO_DEVICE_MATCH:-BlackHole 2ch}"
 AMBIENT_RENDERER_URL="${AMBIENT_RENDERER_URL:-http://raspberrypi.local:8090}"
+AMBIENT_RENDERER_IDLE_MODE="${AMBIENT_RENDERER_IDLE_MODE:-renderer}"
 
 api_ready() { curl --silent --fail "${LEDFX_URL%/}/api/info" >/dev/null 2>&1; }
 
@@ -73,7 +74,7 @@ case "${1:-help}" in
     effect="$(curl --silent --fail "${LEDFX_URL%/}/api/virtuals/${LEDFX_VIRTUAL_ID}/effects" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("effect") or {}).get("type", ""))')"
     [[ -z "$effect" ]] || curl --silent --fail -X POST -H 'Content-Type: application/json' \
       --data "{\"type\":\"${effect}\"}" "${LEDFX_URL%/}/api/virtuals/${LEDFX_VIRTUAL_ID}/effects/delete" >/dev/null
-    renderer_mode preview
+    renderer_mode "$AMBIENT_RENDERER_IDLE_MODE"
     ;;
   status) api_ready && printf 'LedFx is running.\n' || { printf 'LedFx is stopped.\n'; exit 1; } ;;
   *) printf 'Usage: %s {start|energy|spectrum|wavelength|status|stop}\n' "$0" ;;

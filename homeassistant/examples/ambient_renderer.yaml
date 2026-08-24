@@ -35,6 +35,7 @@ rest:
           - active_event
           - last_event
           - last_error
+          - output_error
 
 script:
   ambient_renderer_test_hour:
@@ -60,6 +61,10 @@ automation:
       - trigger: time_pattern
         minutes: "0"
     conditions:
+      - condition: template
+        value_template: >-
+          {{ is_state('sensor.ambient_renderer', 'renderer')
+             or is_state('light.wled_main', 'on') }}
       - condition: template
         value_template: >-
           {{ now().hour not in [0, 6]
