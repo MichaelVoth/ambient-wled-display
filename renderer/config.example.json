@@ -1,0 +1,33 @@
+{
+  "fps": 30,
+  "output_enabled": false,
+  "palette": ["#06142e", "#075f73", "#42a6a1", "#bac7bd"],
+  "palette_speed": 0.018,
+  "log_path": "/data/ambient-renderer.jsonl",
+  "devices": [
+    {
+      "id": "office-wall",
+      "name": "Office Wall",
+      "host": "wled.local",
+      "pixel_count": 278,
+      "ddp_port": 4048,
+      "brightness": 0.5,
+      "lanes": [
+        {
+          "id": "office-wall-a",
+          "name": "Wall strip A",
+          "start": 0,
+          "length": 139,
+          "top_at_high_index": true
+        },
+        {
+          "id": "office-wall-b",
+          "name": "Wall strip B",
+          "start": 139,
+          "length": 139,
+          "top_at_high_index": true
+        }
+      ]
+    }
+  ]
+}

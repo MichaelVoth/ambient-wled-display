@@ -1,60 +1,119 @@
-# Architecture
+# Central Renderer Architecture
 
-The project deliberately leaves WLED firmware unchanged. WLED remains the
-pixel renderer and Home Assistant decides when information deserves attention.
+The system deliberately separates context, graphics, and hardware. Home
+Assistant decides **what information matters**. The ambient renderer decides
+**what every pixel should look like**. Stock WLED sends those pixels to the
+physical outputs.
 
-## Layers
+```mermaid
+flowchart LR
+  Context["Time · Weather · Presence · Calendar · Energy · Health"] --> HA["Home Assistant\ncontext and automation"]
+  HA -->|"semantic REST events"| Renderer["Ambient Renderer on Pi\nlayers · priorities · timelines · logs"]
+  Renderer --> Simulator["Browser control center\nand lane simulator"]
+  Renderer -->|"20 complete frames/sec over DDP"| WLED["Stock WLED on ESP32\nhardware safety and fallback"]
+  WLED --> A["Physical output A\n139 LEDs"]
+  WLED --> B["Physical output B\n139 LEDs"]
+  Music["LedFx music mode"] -->|"exclusive realtime ownership"| WLED
+```
 
-1. **WLED** stores durable looks as numbered presets and accepts temporary JSON
-   state changes.
-2. **Controllers** snapshot WLED, show information, and restore the snapshot.
-3. **Home Assistant** supplies time, weather, presence, service health, and
-   other context.
-4. **LedFx** owns WLED only while realtime music output is active.
+## Control plane and frame plane
 
-The controllers check WLED's `live` flag before displaying anything. This
-prevents an hourly marker or notification from interrupting LedFx. Temporary
-signals also restore the complete WLED segment state rather than guessing which
-preset was previously visible.
+The previous hourly controller attempted to animate through WLED's JSON control
+API. That API is appropriate for occasional commands such as selecting a preset
+or changing brightness. It is not a frame clock.
 
-## Priority model
+The renderer uses two distinct paths:
 
-Use these priorities when adding automations:
+- The **control plane** carries meanings: `hour=10`, `rain=true`, or
+  `mode=music`. Home Assistant sends these small REST requests to the renderer.
+- The **frame plane** carries finished pictures. The renderer sends all 278 RGB
+  pixels to WLED at a stable configured frame rate using DDP/UDP. The current
+  office controller is deliberately set to 20 frames per second.
 
-1. Safety and urgent failures
-2. Realtime music
-3. Short notifications
-4. Persistent context such as rain
-5. Decorative baseline
+No animation phase depends on dozens of HTTP response times. One monotonic
+clock controls the complete timeline.
 
-Home Assistant automation modes matter. Use `queued` for short signals that
-must be seen, `restart` when only the newest state matters, and `single` for
-scheduled events that should not overlap themselves.
+## Device, lane, layer, and event
 
-Scheduled collisions should be resolved before they reach WLED. The example
-gives midnight shutdown, 6 AM startup, and the Tuesday-Friday 4 PM workday
-celebration exclusive ownership of those times. The hourly controller also
-checks that it still owns the displayed state before restoring; an alert or
-weather change that arrives mid-animation is therefore allowed to take over.
+- A **device** is one WLED controller.
+- A **lane** is one physical or conceptual strip within a device. The office
+  controller currently has two 139-LED lanes.
+- A **layer** is persistent context that modifies the baseline, such as rain or
+  focus mode.
+- An **event** is a bounded timeline such as the hourly clock or an urgent
+  alert.
 
-## Why the hourly display uses rendered pixels
+WLED segments are not used as visual layers. The renderer composites layers in
+memory and sends one unambiguous final color for every pixel.
 
-WLED effects are continuous loops, so a fixed delay cannot guarantee that a
-one-way sweep has reached the bottom before the next phase begins. The hourly
-controller instead captures WLED's rendered RGB framebuffer, freezes that exact
-visible palette, and progressively blacks the pixels from each physical top to
-its bottom over a fixed duration. The last sweep step is therefore guaranteed
-to be the fully dark frame.
+## Layer composition
 
-The controller reads physical output boundaries from `/json/cfg`. Each output
-is swept independently but simultaneously, and each receives the same toll
-pattern near its own top. WLED's individual-pixel JSON control allows the hour
-to use one segment per physical output, so two 139-LED wall strips consume only
-two segments even at twelve o'clock. With the default three-dark-LED spacing,
-twelve tolls occupy the top 45 LEDs of each output.
+The initial stack is:
 
-The controller snapshots the complete original state before it begins and fades
-back to that snapshot after holding the completed hour for five seconds. Before
-each phase and before restoration, it verifies that no other automation has
-taken control. If ownership changed, the hourly display yields instead of
-restoring stale state over a newer alert, weather state, or manual selection.
+1. **Ambient baseline** — a slowly rolling, configurable gradient.
+2. **Rain** — a persistent blue ripple blended into the baseline.
+3. **Focus** — a persistent brightness reduction.
+4. **Hourly event** — an eight-second feathered wipe, cumulative bell tolls,
+   five-second hold, and three-second crossfade back to the still-moving base.
+5. **Urgent alert** — a higher-priority pulse that may replace a lower-priority
+   event.
+
+Adding a layer does not require changing WLED presets or segment topology. A
+new layer implements a color transformation and declares its semantic meaning.
+
+## Priority and ownership
+
+The renderer is the sole normal frame owner. Event priorities are enforced in
+one process: urgent alerts replace the hourly clock; lower-priority events wait
+in a queue. Persistent layers remain part of the underlying base.
+
+Music is an explicit exclusive mode. When mode changes to `music`, the renderer
+stops sending DDP frames and cancels its temporary events. WLED's realtime
+timeout releases the renderer, allowing LedFx to take ownership. Returning to
+`renderer` resumes the ambient frame stream.
+
+If the renderer container stops or the Pi becomes unavailable, DDP packets stop
+and stock WLED returns to its existing preset after its configured realtime
+timeout. WLED therefore remains the hardware and fallback authority.
+
+During migration, a temporary ownership lease is available. Home Assistant can
+request an event with `take_output=true`; the renderer preflights WLED, owns the
+frame stream only for that event, sends a final restored frame, then releases
+the controller back to its existing preset. This lets one automation migrate at
+a time without making the old and new systems write pixels simultaneously.
+
+## Hourly timeline
+
+At the current 20 FPS, the eight-second sweep contains 160 calculated frames. A feathered
+edge progressively multiplies the baseline brightness from full intensity to
+black. Both lanes use their own top-to-bottom coordinate map and advance on the
+same clock.
+
+After the black frame, the event adds one dot per second. Each new dot fades in
+over 180 milliseconds; earlier dots remain. Three dark pixels separate each
+dot. The final count holds for five seconds. The renderer then blends every
+pixel from the clock frame back into the continuously calculated baseline over
+three seconds. There is no WLED segment rebuild or preset restart in that fade.
+
+## Observability
+
+The service exposes:
+
+- `/health` for container health checks.
+- `/api/status` for mode, measured frame rate, active phase, layers, queue,
+  frame counters, last result, and errors.
+- `/api/frame` for the exact simulated colors currently being sent.
+- an append-only JSON Lines event log in the renderer data volume.
+
+The browser control center uses the same API as Home Assistant. A test run is
+therefore the real state machine, not a separate approximation.
+
+## Scaling through the house
+
+Additional WLED controllers are added as devices in `renderer.json`. Each may
+have its own pixel count, brightness, output host, lanes, and orientations.
+Semantic events and persistent layers accept target IDs: omit targets for the
+whole house, use a device ID for one controller, or use lane IDs for individual
+physical strips. Room and floor groups can be added on top of the same target
+model. The compositing and priority rules remain centralized while every WLED
+retains local electrical configuration and a safe fallback preset.

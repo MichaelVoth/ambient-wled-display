@@ -15,7 +15,7 @@ A strip is easiest to read when each visual property has a stable job.
 
 | Signal | Treatment |
 | --- | --- |
-| Hour | Current palette, one top-down gap per hour |
+| Hour | Sweep to darkness, then cumulative top-down bell-toll dots |
 | Rain | Persistent slow blue movement |
 | Calendar event soon | Amber section that grows toward the top |
 | Task complete | Brief green upward wave |
@@ -24,5 +24,8 @@ A strip is easiest to read when each visual property has a stable job.
 | Someone arriving | Brief upward sweep |
 | Quiet or focus time | Lower brightness and reduced motion |
 
-Avoid stacking meanings. If red sometimes means weather, sometimes a meeting,
-and sometimes a failure, it stops being glanceable.
+Layers may be combined when they use independent channels—for example, a blue
+ambient palette can communicate rain while a short motion communicates an
+arrival. Avoid assigning incompatible meanings to the same channel. If red
+sometimes means weather, sometimes a meeting, and sometimes a failure, it
+stops being glanceable.

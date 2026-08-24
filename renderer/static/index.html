@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ambient Display Control Center</title>
+  <style>
+    :root { color-scheme: dark; --panel:#141922; --line:#2b3444; --cyan:#55d8e8; --muted:#91a0b5; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:15px/1.45 system-ui,sans-serif; background:#090c11; color:#eef4ff; }
+    header { padding:22px 28px; border-bottom:1px solid var(--line); background:#0e131b; }
+    h1 { margin:0 0 4px; font-size:22px; font-weight:650; }
+    header p { margin:0; color:var(--muted); }
+    main { display:grid; grid-template-columns:minmax(300px,420px) 1fr; gap:20px; padding:20px; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
+    h2 { font-size:16px; margin:0 0 14px; }
+    label { color:var(--muted); display:block; margin:13px 0 5px; }
+    button,select,input { background:#202938; color:#fff; border:1px solid #3c4960; border-radius:8px; padding:9px 11px; }
+    button { cursor:pointer; }
+    button:hover { border-color:var(--cyan); }
+    button.primary { background:#117787; border-color:#32b7c9; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .status { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .metric { background:#0d1219; border-radius:9px; padding:10px; }
+    .metric small { color:var(--muted); display:block; }
+    .device { display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; }
+    .lane { text-align:center; color:var(--muted); }
+    canvas { display:block; width:54px; height:556px; background:#020304; border:1px solid #313a49; border-radius:7px; margin:8px auto; }
+    pre { white-space:pre-wrap; color:#b9c8db; font-size:12px; }
+    .ok { color:#80e6a4; } .bad { color:#ff8a86; }
+    .notice { min-height:22px; margin-top:10px; color:var(--muted); }
+    @media (max-width:800px) { main { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Ambient Display Control Center</h1>
+    <p>Semantic layers in, complete LED frames out.</p>
+  </header>
+  <main>
+    <div>
+      <section>
+        <h2>Renderer</h2>
+        <div class="status">
+          <div class="metric"><small>Health</small><span id="health">Connecting…</span></div>
+          <div class="metric"><small>Frame rate</small><span id="fps">—</span></div>
+          <div class="metric"><small>Mode</small><span id="modeText">—</span></div>
+          <div class="metric"><small>Active event</small><span id="eventText">None</span></div>
+        </div>
+        <label for="mode">Output ownership</label>
+        <div class="row">
+          <select id="mode">
+            <option value="renderer">Renderer → WLED</option>
+            <option value="preview">Simulator only</option>
+            <option value="music">Music / LedFx owns WLED</option>
+            <option value="off">Output stopped</option>
+          </select>
+          <button id="setMode">Apply</button>
+        </div>
+      </section>
+      <section style="margin-top:20px">
+        <h2>Test information</h2>
+        <label for="hour">Bell-toll hour</label>
+        <div class="row">
+          <input id="hour" type="number" min="0" max="23" value="10">
+          <button id="previewHour">Preview hour</button>
+          <button id="runHour" class="primary">Run on WLED</button>
+          <button id="cancel">Cancel</button>
+        </div>
+        <div id="notice" class="notice">Preview changes only the simulator. Run on WLED takes temporary control and releases it automatically.</div>
+        <label>Persistent layers</label>
+        <div class="row">
+          <button data-layer="rain">Toggle rain</button>
+          <button data-layer="focus">Toggle focus</button>
+        </div>
+        <label>Priority event</label>
+        <div class="row"><button id="alert">Test urgent alert</button></div>
+      </section>
+      <section style="margin-top:20px">
+        <h2>Live state</h2>
+        <pre id="details">Waiting for renderer…</pre>
+      </section>
+    </div>
+    <section>
+      <h2>Physical lane simulator</h2>
+      <div id="devices"></div>
+    </section>
+  </main>
+  <script>
+    let config=null,status=null;
+    async function api(path, body) {
+      const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
+      const response=await fetch(path,options); const data=await response.json();
+      if(!response.ok) throw new Error(data.error||response.statusText); return data;
+    }
+    function buildDevices() {
+      const root=document.querySelector('#devices'); root.innerHTML='';
+      for(const device of config.devices) {
+        const block=document.createElement('div'); block.className='device';
+        for(const lane of device.lanes) {
+          const item=document.createElement('div'); item.className='lane';
+          item.innerHTML=`<strong>${lane.name}</strong><canvas width="54" height="556" data-device="${device.id}" data-start="${lane.start}" data-length="${lane.length}" data-reverse="${lane.top_at_high_index}"></canvas><small>${lane.length} LEDs</small>`;
+          block.appendChild(item);
+        }
+        root.appendChild(block);
+      }
+    }
+    function draw(frames) {
+      for(const canvas of document.querySelectorAll('canvas')) {
+        const ctx=canvas.getContext('2d'), frame=frames[canvas.dataset.device]||[];
+        const start=+canvas.dataset.start,length=+canvas.dataset.length,reverse=canvas.dataset.reverse==='true';
+        const h=canvas.height/length; ctx.clearRect(0,0,canvas.width,canvas.height);
+        for(let y=0;y<length;y++) {
+          const local=reverse?length-1-y:y; ctx.fillStyle=frame[start+local]||'#000000';
+          ctx.fillRect(0,y*h,canvas.width,Math.ceil(h)+0.4);
+        }
+      }
+    }
+    async function refresh() {
+      try {
+        const [nextStatus,frame]=await Promise.all([api('/api/status'),api('/api/frame')]); status=nextStatus;
+        document.querySelector('#health').textContent=status.ok?'Healthy':'Error';
+        document.querySelector('#health').className=status.ok?'ok':'bad';
+        document.querySelector('#fps').textContent=`${status.fps_average} / ${status.fps_target}`;
+        document.querySelector('#modeText').textContent=status.mode;
+        document.querySelector('#mode').value=status.mode;
+        document.querySelector('#eventText').textContent=status.active_event?`${status.active_event.kind}: ${status.active_event.phase}`:'None';
+        document.querySelector('#details').textContent=JSON.stringify({layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,frames_sent:status.frames_sent,temporary_ownership:status.output_lease_return_mode,output_validation:status.output_validation},null,2);
+        draw(frame.frames);
+      } catch(error) { document.querySelector('#health').textContent=error.message; document.querySelector('#health').className='bad'; }
+    }
+    async function action(work, success) {
+      const notice=document.querySelector('#notice');
+      try { await work(); notice.textContent=success; notice.className='notice ok'; await refresh(); }
+      catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    }
+    async function init() { config=await api('/api/config'); buildDevices(); await refresh(); setInterval(refresh,200); }
+    document.querySelector('#setMode').onclick=()=>action(()=>api('/api/mode',{mode:document.querySelector('#mode').value}),'Output mode updated.');
+    document.querySelector('#previewHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:false}),'Preview started.');
+    document.querySelector('#runHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:true}),'WLED preflight passed. Temporary output started.');
+    document.querySelector('#cancel').onclick=()=>action(()=>api('/api/events/cancel',{}),'Event cancelled and temporary output released.');
+    document.querySelector('#alert').onclick=()=>action(()=>api('/api/events/alert',{color:'#ff351f',duration:6}),'Urgent alert started.');
+    for(const button of document.querySelectorAll('[data-layer]')) button.onclick=()=>action(()=>api(`/api/layers/${button.dataset.layer}`,{enabled:!status.layers[button.dataset.layer]}),`${button.dataset.layer} layer updated.`);
+    init();
+  </script>
+</body>
+</html>

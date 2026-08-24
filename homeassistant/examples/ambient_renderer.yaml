@@ -1,0 +1,72 @@
+# Local REST bridge from Home Assistant to the central ambient renderer.
+# Change the host if the renderer does not run on the same Pi.
+
+rest_command:
+  ambient_renderer_hour:
+    url: "http://127.0.0.1:8090/api/events/hour"
+    method: POST
+    content_type: application/json
+    payload: '{"hour": {{ hour | int }}, "take_output": {{ take_output | default(false) | bool | lower }}}'
+
+  ambient_renderer_layer:
+    url: "http://127.0.0.1:8090/api/layers/{{ layer }}"
+    method: POST
+    content_type: application/json
+    payload: '{"enabled": {{ enabled | bool | lower }}}'
+
+  ambient_renderer_mode:
+    url: "http://127.0.0.1:8090/api/mode"
+    method: POST
+    content_type: application/json
+    payload: '{"mode": "{{ mode }}"}'
+
+rest:
+  - resource: "http://127.0.0.1:8090/api/status"
+    scan_interval: 15
+    sensor:
+      - name: Ambient Renderer
+        unique_id: ambient_renderer_status
+        value_template: "{{ value_json.mode }}"
+        json_attributes:
+          - ok
+          - fps_average
+          - frames_sent
+          - layers
+          - active_event
+          - last_event
+          - last_error
+
+script:
+  ambient_renderer_test_hour:
+    alias: Ambient Renderer Test Hour
+    mode: restart
+    fields:
+      hour:
+        required: true
+        selector:
+          number:
+            min: 0
+            max: 23
+    sequence:
+      - action: rest_command.ambient_renderer_hour
+        data:
+          hour: "{{ hour | int }}"
+          take_output: true
+
+automation:
+  - id: ambient_renderer_hourly_clock
+    alias: Ambient Renderer Hourly Clock
+    triggers:
+      - trigger: time_pattern
+        minutes: "0"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ now().hour not in [0, 6]
+             and not (now().weekday() in [1, 2, 3, 4] and now().hour == 16) }}
+    actions:
+      - action: rest_command.ambient_renderer_hour
+        data:
+          hour: "{{ now().hour }}"
+          take_output: true
+    mode: single
