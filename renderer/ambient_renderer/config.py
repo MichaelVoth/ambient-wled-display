@@ -24,6 +24,9 @@ class DeviceConfig:
     host: str
     pixel_count: int
     lanes: tuple[LaneConfig, ...]
+    transport: str = "udp_realtime"
+    realtime_port: int = 21324
+    realtime_timeout: int = 2
     ddp_port: int = 4048
     brightness: float = 0.5
 
@@ -83,12 +86,25 @@ def load_config(path: str | Path) -> RendererConfig:
         brightness = float(device_data.get("brightness", 0.5))
         if not 0.0 <= brightness <= 1.0:
             raise ValueError(f"brightness for device {device_id!r} must be between 0 and 1")
+        transport = str(device_data.get("transport", "udp_realtime"))
+        if transport not in {"udp_realtime", "ddp"}:
+            raise ValueError(
+                f"transport for device {device_id!r} must be 'udp_realtime' or 'ddp'"
+            )
+        realtime_timeout = int(device_data.get("realtime_timeout", 2))
+        if not 1 <= realtime_timeout <= 255:
+            raise ValueError(
+                f"realtime_timeout for device {device_id!r} must be between 1 and 255"
+            )
         devices.append(DeviceConfig(
             id=device_id,
             name=str(device_data.get("name", device_id)),
             host=str(_required(device_data, "host", f"device {device_id}")),
             pixel_count=pixel_count,
             lanes=tuple(lanes),
+            transport=transport,
+            realtime_port=int(device_data.get("realtime_port", 21324)),
+            realtime_timeout=realtime_timeout,
             ddp_port=int(device_data.get("ddp_port", 4048)),
             brightness=brightness,
         ))

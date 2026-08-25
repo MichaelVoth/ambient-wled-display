@@ -20,14 +20,15 @@ existing preset when running under temporary ownership.
 
 The renderer models multiple WLED devices and physical lanes centrally. It
 combines ambient color, persistent context, and prioritized events into complete
-pixel frames, then sends those frames through WLED's realtime DDP interface.
+pixel frames, then sends those frames through WLED's realtime UDP interface.
 
 ## Features
 
 - Top-down 12-hour cumulative bell-toll display
 - Explicit multi-output lane configuration and synchronized rendering
 - Browser control center with an exact physical-lane simulator
-- Stable configurable DDP output instead of HTTP animation choreography
+- Stable configurable UDP realtime output instead of HTTP animation choreography
+- Independent sender and WLED receiver FPS, jitter, and deadline monitoring
 - Persistent semantic layers and prioritized temporary events
 - Multi-device configuration for future rooms and stairs
 - Explicit music mode so LedFx and the renderer never fight for ownership
@@ -47,7 +48,7 @@ flowchart LR
   Energy["Energy statistics"] --> HA
   Health["Pi-hole / CI / service health"] --> HA
   Controller --> Preview["Browser simulator"]
-  Controller --> API["WLED realtime DDP"]
+  Controller --> API["WLED realtime UDP"]
   Music["Music application"] --> Multi["macOS multi-output device"]
   Multi --> Speakers["Speakers or headphones"]
   Multi --> BlackHole["BlackHole 2ch"]
@@ -56,7 +57,8 @@ flowchart LR
 ```
 
 See [the architecture guide](docs/architecture.md), [control-center guide](docs/control-center.md),
-[deployment and operations](docs/deployment.md), and [visual language](docs/visual-language.md).
+[deployment and operations](docs/deployment.md), [performance audit](docs/performance-audit.md),
+and [visual language](docs/visual-language.md).
 
 ## Quick start
 

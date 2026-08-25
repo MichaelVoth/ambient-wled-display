@@ -14,8 +14,8 @@ from typing import Any
 
 from .color import RGB, parse_hex
 from .config import RendererConfig
-from .ddp import DDPOutput
 from .effects import AlertEvent, HourEvent, render_alert, render_base, render_hour
+from .output import create_output
 
 
 LOGGER = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ class RendererEngine:
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
+        self.monitor_thread: threading.Thread | None = None
         self.mode = "renderer" if config.output_enabled else "preview"
         self.layers = {"rain": False, "focus": False}
         self.layer_targets: dict[str, tuple[str, ...] | None] = {"rain": None, "focus": None}
@@ -36,9 +37,13 @@ class RendererEngine:
         self.frames: dict[str, list[RGB]] = {
             device.id: [(0, 0, 0)] * device.pixel_count for device in config.devices
         }
-        self.outputs = {device.id: DDPOutput(device.host, device.ddp_port) for device in config.devices}
+        self.outputs = {device.id: create_output(device) for device in config.devices}
         self.frames_rendered = 0
         self.frames_sent = 0
+        self.bytes_sent = 0
+        self.deadline_misses = 0
+        self.frame_times: deque[float] = deque(maxlen=max(120, config.fps * 10))
+        self.send_durations: deque[float] = deque(maxlen=max(120, config.fps * 10))
         self.started_at = time.monotonic()
         self.last_frame_at = 0.0
         self.last_error: str | None = None
@@ -46,6 +51,8 @@ class RendererEngine:
         self.last_event: dict[str, Any] | None = None
         self.return_mode_after_events: str | None = None
         self.output_validation: dict[str, dict[str, Any]] = {}
+        self.receiver_status: dict[str, dict[str, Any]] = {}
+        self.last_phase_key: tuple[int, str] | None = None
         self.log_path = Path(config.log_path)
 
     def start(self) -> None:
@@ -61,12 +68,20 @@ class RendererEngine:
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._run, name="ambient-renderer", daemon=True)
         self.thread.start()
+        self.monitor_thread = threading.Thread(
+            target=self._monitor_outputs,
+            name="ambient-output-monitor",
+            daemon=True,
+        )
+        self.monitor_thread.start()
         self._record("renderer_started", mode=self.mode, fps=self.config.fps)
 
     def stop(self) -> None:
         self.stop_event.set()
         if self.thread:
             self.thread.join(timeout=3)
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=3)
         for output in self.outputs.values():
             output.close()
         self._record("renderer_stopped")
@@ -184,6 +199,7 @@ class RendererEngine:
                 self.stop_event.wait(next_frame - now)
                 continue
             if now - next_frame > interval * 3:
+                self.deadline_misses += max(1, int((now - next_frame) / interval))
                 next_frame = now
             try:
                 self._render(now)
@@ -211,6 +227,21 @@ class RendererEngine:
             layer_targets = dict(self.layer_targets)
             mode = self.mode
 
+        if event:
+            phase = event.phase(now)[0]
+            phase_key = (id(event), phase)
+            if phase_key != self.last_phase_key:
+                self.last_phase_key = phase_key
+                self._record(
+                    "event_phase_started",
+                    kind=event.kind,
+                    phase=phase,
+                    frame=self.frames_rendered + 1,
+                    elapsed=round(now - event.started_at, 4),
+                )
+        else:
+            self.last_phase_key = None
+
         for device in self.config.devices:
             rain_lanes = self._target_lanes(device, layer_targets["rain"])
             focus_lanes = self._target_lanes(device, layer_targets["focus"])
@@ -234,10 +265,14 @@ class RendererEngine:
                     frame = render_alert(frame, device, event, now, target_lanes)
             self.frames[device.id] = frame
             if mode == "renderer":
-                self.outputs[device.id].send(frame)
+                send_started = time.monotonic()
+                sent = self.outputs[device.id].send(frame)
+                self.send_durations.append(time.monotonic() - send_started)
+                self.bytes_sent += int(sent or 0)
                 self.frames_sent += 1
         self.frames_rendered += 1
         self.last_frame_at = now
+        self.frame_times.append(now)
         if release_after_frame:
             with self.lock:
                 released_to = self.return_mode_after_events
@@ -270,17 +305,74 @@ class RendererEngine:
     def status(self) -> dict[str, Any]:
         now = time.monotonic()
         with self.lock:
+            recent_times = [stamp for stamp in self.frame_times if now - stamp <= 5.0]
+            recent_fps = 0.0
+            intervals: list[float] = []
+            if len(recent_times) > 1:
+                intervals = [
+                    current - previous
+                    for previous, current in zip(recent_times, recent_times[1:])
+                ]
+                recent_fps = (len(recent_times) - 1) / max(
+                    0.001, recent_times[-1] - recent_times[0]
+                )
+            sorted_intervals = sorted(intervals)
+            p95_interval = (
+                sorted_intervals[min(len(sorted_intervals) - 1, int(len(sorted_intervals) * 0.95))]
+                if sorted_intervals
+                else 0.0
+            )
+            sorted_sends = sorted(self.send_durations)
+            p95_send = (
+                sorted_sends[min(len(sorted_sends) - 1, int(len(sorted_sends) * 0.95))]
+                if sorted_sends
+                else 0.0
+            )
             event = self._event_summary(self.active_event, now) if self.active_event else None
             queue = [self._event_summary(item, now) for item in self.event_queue]
+            health_issues: list[str] = []
+            if self.mode == "renderer":
+                for device in self.config.devices:
+                    receiver = self.receiver_status.get(device.id)
+                    if not receiver:
+                        continue
+                    if not receiver.get("ok"):
+                        health_issues.append(f"{device.name} receiver probe failed")
+                        continue
+                    if time.time() - float(receiver.get("checked_at", 0)) > 15:
+                        health_issues.append(f"{device.name} receiver telemetry is stale")
+                    receiver_fps = float(receiver.get("fps") or 0)
+                    if receiver_fps < self.config.fps * 0.8:
+                        health_issues.append(
+                            f"{device.name} displays {receiver_fps:g} FPS; target is {self.config.fps}"
+                        )
+                    expected_mode = "UDP" if device.transport == "udp_realtime" else "DDP"
+                    if receiver.get("live_mode") != expected_mode:
+                        health_issues.append(
+                            f"{device.name} reports {receiver.get('live_mode') or 'no'} realtime owner; "
+                            f"expected {expected_mode}"
+                        )
             return {
-                "ok": self.last_error is None and self.output_error is None,
+                "ok": (
+                    self.last_error is None
+                    and self.output_error is None
+                    and not health_issues
+                ),
+                "health_issues": health_issues,
                 "mode": self.mode,
                 "fps_target": self.config.fps,
                 "fps_average": round(self.frames_rendered / max(0.001, now - self.started_at), 2),
+                "fps_recent": round(recent_fps, 2),
+                "frame_interval_p95_ms": round(p95_interval * 1000, 2),
+                "frame_interval_max_ms": round(max(intervals, default=0.0) * 1000, 2),
+                "send_duration_p95_ms": round(p95_send * 1000, 3),
+                "deadline_misses": self.deadline_misses,
                 "frames_rendered": self.frames_rendered,
                 "frames_sent": self.frames_sent,
+                "bytes_sent": self.bytes_sent,
                 "output_lease_return_mode": self.return_mode_after_events,
                 "output_validation": dict(self.output_validation),
+                "receiver_status": dict(self.receiver_status),
                 "layers": dict(self.layers),
                 "layer_targets": {
                     name: list(targets) if targets else "all"
@@ -297,11 +389,47 @@ class RendererEngine:
                         "name": device.name,
                         "host": device.host,
                         "pixel_count": device.pixel_count,
+                        "transport": device.transport,
+                        "transport_port": (
+                            device.realtime_port
+                            if device.transport == "udp_realtime"
+                            else device.ddp_port
+                        ),
                         "lanes": [asdict(lane) for lane in device.lanes],
                     }
                     for device in self.config.devices
                 ],
             }
+
+    def _monitor_outputs(self) -> None:
+        """Probe the receiver outside the render loop so diagnostics cannot cause jitter."""
+        while not self.stop_event.is_set():
+            checked_at = time.time()
+            for device in self.config.devices:
+                try:
+                    with urllib.request.urlopen(
+                        f"http://{device.host}/json/info", timeout=2.0
+                    ) as response:
+                        info = json.load(response)
+                    leds = info.get("leds", {})
+                    reading = {
+                        "ok": True,
+                        "checked_at": checked_at,
+                        "fps": leds.get("fps"),
+                        "live": info.get("live"),
+                        "live_mode": info.get("lm"),
+                        "source_ip": info.get("lip"),
+                        "version": info.get("ver"),
+                    }
+                except Exception as exc:
+                    reading = {
+                        "ok": False,
+                        "checked_at": checked_at,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                with self.lock:
+                    self.receiver_status[device.id] = reading
+            self.stop_event.wait(5.0)
 
     def _normalize_targets(
         self,

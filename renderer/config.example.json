@@ -10,6 +10,9 @@
       "name": "Office Wall",
       "host": "wled.local",
       "pixel_count": 278,
+      "transport": "udp_realtime",
+      "realtime_port": 21324,
+      "realtime_timeout": 2,
       "ddp_port": 4048,
       "brightness": 0.5,
       "lanes": [

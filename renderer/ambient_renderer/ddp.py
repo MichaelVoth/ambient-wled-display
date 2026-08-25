@@ -55,18 +55,22 @@ def encode_packets(
 
 
 class DDPOutput:
+    name = "ddp"
+
     def __init__(self, host: str, port: int = 4048) -> None:
         self.host = host
         self.port = port
         self.sequence = 1
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    def send(self, frame: list[RGB]) -> None:
+    def send(self, frame: list[RGB]) -> int:
         packets = encode_packets(frame, self.sequence)
+        sent = 0
         for packet in packets:
-            self.socket.sendto(packet, (self.host, self.port))
+            sent += self.socket.sendto(packet, (self.host, self.port))
         for _ in packets:
             self.sequence = 1 if self.sequence >= 15 else self.sequence + 1
+        return sent
 
     def close(self) -> None:
         self.socket.close()

@@ -3,6 +3,7 @@ import pathlib
 import struct
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -13,6 +14,7 @@ from ambient_renderer.config import DeviceConfig, LaneConfig, RendererConfig, lo
 from ambient_renderer.ddp import DDP_PUSH, encode_packet, encode_packets  # noqa: E402
 from ambient_renderer.effects import HourEvent, HourTiming, render_hour  # noqa: E402
 from ambient_renderer.engine import RendererEngine  # noqa: E402
+from ambient_renderer.output import DRGB_PROTOCOL, encode_drgb  # noqa: E402
 
 
 class RendererTests(unittest.TestCase):
@@ -46,6 +48,15 @@ class RendererTests(unittest.TestCase):
         self.assertEqual([packet[1] for packet in packets], [14, 15, 1])
         self.assertEqual([struct.unpack(">I", packet[4:8])[0] for packet in packets], [0, 1440, 2880])
         self.assertEqual(sum(struct.unpack(">H", packet[8:10])[0] for packet in packets), 3003)
+
+    def test_udp_realtime_drgb_is_one_compact_complete_frame(self):
+        frame = [(1, 2, 3), (4, 5, 6)]
+        packet = encode_drgb(frame, timeout=2)
+        self.assertEqual(packet, bytes([DRGB_PROTOCOL, 2, 1, 2, 3, 4, 5, 6]))
+
+    def test_udp_realtime_rejects_frames_over_wled_limit(self):
+        with self.assertRaisesRegex(ValueError, "at most 490"):
+            encode_drgb([(1, 2, 3)] * 491)
 
     def test_hour_sweep_is_monotonic_top_to_bottom(self):
         device = self.device()
@@ -112,6 +123,45 @@ class RendererTests(unittest.TestCase):
             path.write_text(json.dumps(config), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "overlaps"):
                 load_config(path)
+
+    def test_config_defaults_to_udp_realtime_transport(self):
+        config = {
+            "devices": [{
+                "id": "office", "host": "wled.local", "pixel_count": 10,
+                "lanes": [{"id": "one", "start": 0, "length": 10}],
+            }]
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "config.json"
+            path.write_text(json.dumps(config), encoding="utf-8")
+            device = load_config(path).devices[0]
+            self.assertEqual(device.transport, "udp_realtime")
+            self.assertEqual(device.realtime_port, 21324)
+
+    def test_receiver_slowdown_makes_renderer_health_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = RendererConfig(
+                fps=30,
+                output_enabled=False,
+                palette=("#000000", "#ffffff"),
+                palette_speed=0.01,
+                devices=(self.device(),),
+                log_path=str(pathlib.Path(directory) / "events.jsonl"),
+            )
+            engine = RendererEngine(config)
+            try:
+                engine.mode = "renderer"
+                engine.receiver_status["office"] = {
+                    "ok": True,
+                    "checked_at": time.time(),
+                    "fps": 3,
+                    "live_mode": "UDP",
+                }
+                status = engine.status()
+                self.assertFalse(status["ok"])
+                self.assertIn("displays 3 FPS", status["health_issues"][0])
+            finally:
+                engine.stop()
 
     def test_urgent_alert_replaces_hour_and_music_rejects_events(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -43,7 +43,9 @@
         <h2>Renderer</h2>
         <div class="status">
           <div class="metric"><small>Health</small><span id="health">Connecting…</span></div>
-          <div class="metric"><small>Frame rate</small><span id="fps">—</span></div>
+          <div class="metric"><small>Pi frame rate</small><span id="fps">—</span></div>
+          <div class="metric"><small>WLED display rate</small><span id="receiverFps">—</span></div>
+          <div class="metric"><small>Transport</small><span id="transport">—</span></div>
           <div class="metric"><small>Mode</small><span id="modeText">—</span></div>
           <div class="metric"><small>Active event</small><span id="eventText">None</span></div>
         </div>
@@ -121,11 +123,14 @@
         const [nextStatus,frame]=await Promise.all([api('/api/status'),api('/api/frame')]); status=nextStatus;
         document.querySelector('#health').textContent=status.ok?'Healthy':'Error';
         document.querySelector('#health').className=status.ok?'ok':'bad';
-        document.querySelector('#fps').textContent=`${status.fps_average} / ${status.fps_target}`;
+        document.querySelector('#fps').textContent=`${status.fps_recent} / ${status.fps_target} FPS`;
+        const device=status.devices[0],receiver=status.receiver_status[device?.id]||{};
+        document.querySelector('#receiverFps').textContent=receiver.fps===undefined?'Waiting…':`${receiver.fps} / ${status.fps_target} FPS`;
+        document.querySelector('#transport').textContent=device?`${device.transport} :${device.transport_port}`:'—';
         document.querySelector('#modeText').textContent=status.mode;
         document.querySelector('#mode').value=status.mode;
         document.querySelector('#eventText').textContent=status.active_event?`${status.active_event.kind}: ${status.active_event.phase}`:'None';
-        document.querySelector('#details').textContent=JSON.stringify({layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,temporary_ownership:status.output_lease_return_mode,output_validation:status.output_validation},null,2);
+        document.querySelector('#details').textContent=JSON.stringify({health_issues:status.health_issues,layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,deadline_misses:status.deadline_misses,frame_interval_p95_ms:status.frame_interval_p95_ms,frame_interval_max_ms:status.frame_interval_max_ms,send_duration_p95_ms:status.send_duration_p95_ms,receiver_status:status.receiver_status,temporary_ownership:status.output_lease_return_mode,output_validation:status.output_validation},null,2);
         draw(frame.frames);
       } catch(error) { document.querySelector('#health').textContent=error.message; document.querySelector('#health').className='bad'; }
     }

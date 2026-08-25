@@ -43,8 +43,10 @@ persistent renderer layer.
 6. Enable continuous output only after every legacy behavior for that room has
    a renderer equivalent.
 
-DDP frames are automatically split for large controllers. Every output is
-preflighted against WLED's reported pixel count before physical ownership.
+The default UDP realtime transport supports up to 490 pixels in one complete
+frame. Larger controllers can opt into DDP, which automatically splits frames.
+Every output is preflighted against WLED's reported pixel count before physical
+ownership.
 
 ## Recovery and rollback
 
@@ -56,6 +58,8 @@ preflighted against WLED's reported pixel count before physical ownership.
   `AMBIENT_RENDERER_IDLE_MODE=renderer` restores continuous ownership.
 - If the renderer container stops, WLED returns to its current preset after the
   realtime timeout.
+- Receiver health is not inferred from the Pi sender. The control center probes
+  WLED every five seconds and reports its display FPS and current realtime owner.
 - Home Assistant backups created during this installation end in
   `.bak-renderer-20260824` beside the active YAML files.
 - The legacy hourly Python controller remains in the Home Assistant config as a
@@ -68,3 +72,6 @@ owns the ambient base, hourly timeline, and rain layer for the connected office
 lane. Home Assistant temporarily releases it for legacy morning, midnight,
 arrival, departure, and celebration presets. Lunch and additional notification
 effects are the next candidates to migrate into named renderer events.
+
+See [the performance audit](performance-audit.md) for the 9 PM stutter root
+cause, live benchmark, and remaining capacity work.

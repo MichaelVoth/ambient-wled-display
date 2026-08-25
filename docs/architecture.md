@@ -10,7 +10,7 @@ flowchart LR
   Context["Time · Weather · Presence · Calendar · Energy · Health"] --> HA["Home Assistant\ncontext and automation"]
   HA -->|"semantic REST events"| Renderer["Ambient Renderer on Pi\nlayers · priorities · timelines · logs"]
   Renderer --> Simulator["Browser control center\nand lane simulator"]
-  Renderer -->|"20 complete frames/sec over DDP"| WLED["Stock WLED on ESP32\nhardware safety and fallback"]
+  Renderer -->|"30 complete frames/sec over UDP realtime"| WLED["Stock WLED on ESP32\nhardware safety and fallback"]
   WLED --> A["Physical output A\n139 LEDs"]
   WLED --> B["Physical output B\n139 LEDs"]
   Music["LedFx music mode"] -->|"exclusive realtime ownership"| WLED
@@ -27,8 +27,10 @@ The renderer uses two distinct paths:
 - The **control plane** carries meanings: `hour=10`, `rain=true`, or
   `mode=music`. Home Assistant sends these small REST requests to the renderer.
 - The **frame plane** carries finished pictures. The renderer sends all 278 RGB
-  pixels to WLED at a stable configured frame rate using DDP/UDP. The current
-  office controller is deliberately set to 20 frames per second.
+pixels to WLED at a stable configured frame rate using WLED's DRGB UDP realtime
+protocol. The current office controller is deliberately set to 30 frames per
+second. DDP remains available per device, but is not used by the office ESP32
+because its WLED 0.15.4 receiver could not sustain that stream smoothly.
 
 No animation phase depends on dozens of HTTP response times. One monotonic
 clock controls the complete timeline.
@@ -68,11 +70,11 @@ one process: urgent alerts replace the hourly clock; lower-priority events wait
 in a queue. Persistent layers remain part of the underlying base.
 
 Music is an explicit exclusive mode. When mode changes to `music`, the renderer
-stops sending DDP frames and cancels its temporary events. WLED's realtime
+stops sending realtime frames and cancels its temporary events. WLED's realtime
 timeout releases the renderer, allowing LedFx to take ownership. Returning to
 `renderer` resumes the ambient frame stream.
 
-If the renderer container stops or the Pi becomes unavailable, DDP packets stop
+If the renderer container stops or the Pi becomes unavailable, realtime packets stop
 and stock WLED returns to its existing preset after its configured realtime
 timeout. WLED therefore remains the hardware and fallback authority.
 
@@ -84,7 +86,7 @@ a time without making the old and new systems write pixels simultaneously.
 
 ## Hourly timeline
 
-At the current 20 FPS, the eight-second sweep contains 160 calculated frames. A feathered
+At the current 30 FPS, the eight-second sweep contains 240 calculated frames. A feathered
 edge progressively multiplies the baseline brightness from full intensity to
 black. Both lanes use their own top-to-bottom coordinate map and advance on the
 same clock.
@@ -100,7 +102,8 @@ three seconds. There is no WLED segment rebuild or preset restart in that fade.
 The service exposes:
 
 - `/health` for container health checks.
-- `/api/status` for mode, measured frame rate, active phase, layers, queue,
+- `/api/status` for mode, recent Pi frame rate, WLED receiver frame rate,
+  transport ownership, jitter, missed deadlines, active phase, layers, queue,
   frame counters, last result, and errors.
 - `/api/frame` for the exact simulated colors currently being sent.
 - an append-only JSON Lines event log in the renderer data volume.
