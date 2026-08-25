@@ -26,6 +26,27 @@ wave, amber warning, or multicolor work celebration. The urgent red alert
 demonstrates priority replacement. **Cancel** returns immediately to the
 continuously rendered base.
 
+## Ambient nebula controls
+
+The normal background is a continuous nebula rather than a looping WLED
+preset. Broad color clouds overlap, stretch, and dissolve while the palette
+slowly enters from the edges. There is no frame where the animation resets.
+
+The control center provides:
+
+- five editable palette colors;
+- Ocean, Aurora, Cosmic, Sunset, and Ember starting looks;
+- color-drift speed, shown as seconds per complete palette cycle;
+- cloud size;
+- saturation; and
+- ambient brightness.
+
+Select a starting look, adjust any colors or sliders, and choose **Apply smooth
+transition**. The old and new configurations crossfade over three seconds. The
+result is stored in the renderer data volume and survives service, Pi, and Home
+Assistant restarts. Rain, hourly tolls, and semantic signals are composited on
+top of the chosen nebula.
+
 ## API examples
 
 ```bash
@@ -65,6 +86,14 @@ curl -X POST http://raspberrypi.local:8090/api/events/signal \
 ```
 
 Supported signals are `reminder`, `success`, `warning`, and `celebration`.
+
+Ambient settings can also be changed through the API:
+
+```bash
+curl -X POST http://raspberrypi.local:8090/api/ambient \
+  -H 'Content-Type: application/json' \
+  -d '{"preset":"cosmic","speed":0.006,"cloud_scale":1.5,"saturation":1.2,"brightness":0.8}'
+```
 
 ```bash
 curl -X POST http://raspberrypi.local:8090/api/mode \

@@ -22,6 +22,12 @@ rest_command:
       {"signal": "{{ signal }}",
        "take_output": {{ take_output | default(false) | bool | lower }}}
 
+  ambient_renderer_look:
+    url: "http://127.0.0.1:8090/api/ambient"
+    method: POST
+    content_type: application/json
+    payload: '{"preset": "{{ preset }}"}'
+
   ambient_renderer_mode:
     url: "http://127.0.0.1:8090/api/mode"
     method: POST

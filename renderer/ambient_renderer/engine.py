@@ -12,7 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from .color import RGB, parse_hex
+from .color import RGB, mix, palette_color, parse_hex, smoothstep
 from .config import RendererConfig
 from .effects import (
     AlertEvent,
@@ -28,11 +28,38 @@ from .output import create_output
 
 LOGGER = logging.getLogger(__name__)
 
+AMBIENT_PRESETS = {
+    "ocean": ["#06142e", "#075f73", "#42a6a1", "#bac7bd", "#315f8c"],
+    "aurora": ["#07112f", "#164e8a", "#16a085", "#65d98b", "#7656b7"],
+    "cosmic": ["#09051d", "#30206f", "#c43aa2", "#2179a8", "#35d0c5"],
+    "sunset": ["#11183b", "#63305d", "#c64f68", "#f49a52", "#f3c87a"],
+    "ember": ["#17080d", "#5c1720", "#b33a2e", "#e87838", "#f2bd65"],
+}
+
 
 class RendererEngine:
     def __init__(self, config: RendererConfig) -> None:
         self.config = config
-        self.palette = tuple(parse_hex(color) for color in config.palette)
+        self.log_path = Path(config.log_path)
+        self.settings_path = Path(config.settings_path)
+        initial_ambient = self._validate_ambient({
+            "palette": list(config.palette),
+            "speed": config.palette_speed,
+            "cloud_scale": config.cloud_scale,
+            "saturation": config.saturation,
+            "brightness": config.ambient_brightness,
+        })
+        try:
+            persisted = json.loads(self.settings_path.read_text(encoding="utf-8"))
+            initial_ambient = self._validate_ambient(persisted, initial_ambient)
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            LOGGER.warning("could not load ambient settings: %s", exc)
+        self.ambient_target = initial_ambient
+        self.ambient_from = initial_ambient
+        self.ambient_changed_at = time.monotonic() - 3.0
+        self.ambient_transition = 3.0
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
@@ -61,7 +88,6 @@ class RendererEngine:
         self.output_validation: dict[str, dict[str, Any]] = {}
         self.receiver_status: dict[str, dict[str, Any]] = {}
         self.last_phase_key: tuple[int, str] | None = None
-        self.log_path = Path(config.log_path)
 
     def start(self) -> None:
         if self.thread and self.thread.is_alive():
@@ -122,6 +148,18 @@ class RendererEngine:
             enabled=bool(enabled),
             targets=normalized_targets,
         )
+
+    def set_ambient(self, changes: dict[str, Any]) -> dict[str, Any]:
+        now = time.monotonic()
+        with self.lock:
+            current = self._ambient_at(now)
+            updated = self._validate_ambient(changes, self.ambient_target)
+            self.ambient_from = current
+            self.ambient_target = updated
+            self.ambient_changed_at = now
+        self._persist_ambient(updated)
+        self._record("ambient_changed", ambient=self._ambient_json(updated))
+        return self._ambient_json(updated)
 
     def trigger_hour(
         self,
@@ -253,6 +291,7 @@ class RendererEngine:
             layers = dict(self.layers)
             layer_targets = dict(self.layer_targets)
             mode = self.mode
+            ambient = self._ambient_at(now)
 
         if event:
             phase = event.phase(now)[0]
@@ -275,12 +314,15 @@ class RendererEngine:
             frame = render_base(
                 device,
                 now,
-                self.palette,
-                self.config.palette_speed,
+                ambient["palette"],
+                ambient["speed"],
                 rain=layers["rain"] and bool(rain_lanes),
                 focus=layers["focus"] and bool(focus_lanes),
                 rain_lanes=rain_lanes,
                 focus_lanes=focus_lanes,
+                cloud_scale=ambient["cloud_scale"],
+                saturation=ambient["saturation"],
+                ambient_brightness=ambient["brightness"],
             )
             if isinstance(event, HourEvent):
                 target_lanes = self._target_lanes(device, event.targets)
@@ -408,6 +450,10 @@ class RendererEngine:
                 "output_validation": dict(self.output_validation),
                 "receiver_status": dict(self.receiver_status),
                 "layers": dict(self.layers),
+                "ambient": {
+                    **self._ambient_json(self.ambient_target),
+                    "transitioning": now - self.ambient_changed_at < self.ambient_transition,
+                },
                 "layer_targets": {
                     name: list(targets) if targets else "all"
                     for name, targets in self.layer_targets.items()
@@ -434,6 +480,95 @@ class RendererEngine:
                     for device in self.config.devices
                 ],
             }
+
+    @staticmethod
+    def _validate_ambient(
+        changes: dict[str, Any],
+        base: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        allowed = {"palette", "speed", "cloud_scale", "saturation", "brightness", "preset"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown ambient settings: " + ", ".join(sorted(unknown)))
+        result = dict(base or {})
+        preset = changes.get("preset")
+        if preset is not None:
+            if preset not in AMBIENT_PRESETS:
+                raise ValueError("unknown ambient preset")
+            result["palette"] = tuple(parse_hex(color) for color in AMBIENT_PRESETS[preset])
+        if "palette" in changes:
+            palette = changes["palette"]
+            if not isinstance(palette, (list, tuple)) or not 2 <= len(palette) <= 8:
+                raise ValueError("palette must contain between 2 and 8 colors")
+            result["palette"] = tuple(
+                color if isinstance(color, tuple) else parse_hex(str(color))
+                for color in palette
+            )
+        ranges = {
+            "speed": (0.001, 0.08),
+            "cloud_scale": (0.3, 3.0),
+            "saturation": (0.0, 2.0),
+            "brightness": (0.05, 1.0),
+        }
+        for name, (low, high) in ranges.items():
+            if name in changes:
+                result[name] = float(changes[name])
+            if name not in result:
+                raise ValueError(f"ambient setting {name!r} is required")
+            if not low <= float(result[name]) <= high:
+                raise ValueError(f"{name} must be between {low} and {high}")
+        if "palette" not in result:
+            raise ValueError("ambient palette is required")
+        return result
+
+    def _ambient_at(self, now: float) -> dict[str, Any]:
+        progress = smoothstep(
+            0.0,
+            self.ambient_transition,
+            now - self.ambient_changed_at,
+        )
+        if progress >= 1.0:
+            return dict(self.ambient_target)
+        first = self.ambient_from
+        second = self.ambient_target
+        count = max(len(first["palette"]), len(second["palette"]))
+        palette = tuple(
+            mix(
+                palette_color(first["palette"], index / count),
+                palette_color(second["palette"], index / count),
+                progress,
+            )
+            for index in range(count)
+        )
+        return {
+            "palette": palette,
+            **{
+                name: float(first[name]) + (float(second[name]) - float(first[name])) * progress
+                for name in ("speed", "cloud_scale", "saturation", "brightness")
+            },
+        }
+
+    @staticmethod
+    def _ambient_json(ambient: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "palette": ["#%02x%02x%02x" % color for color in ambient["palette"]],
+            "speed": round(float(ambient["speed"]), 4),
+            "cloud_scale": round(float(ambient["cloud_scale"]), 3),
+            "saturation": round(float(ambient["saturation"]), 3),
+            "brightness": round(float(ambient["brightness"]), 3),
+        }
+
+    def _persist_ambient(self, ambient: dict[str, Any]) -> None:
+        try:
+            self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.settings_path.with_suffix(self.settings_path.suffix + ".tmp")
+            temporary.write_text(
+                json.dumps(self._ambient_json(ambient), indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(self.settings_path)
+        except OSError as exc:
+            raise ValueError(f"could not save ambient settings: {exc}") from exc
 
     def _monitor_outputs(self) -> None:
         """Probe the receiver outside the render loop so diagnostics cannot cause jitter."""

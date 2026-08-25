@@ -38,6 +38,15 @@ def scale(color: RGB, amount: float) -> RGB:
     return tuple(min(255, round(channel * amount)) for channel in color)  # type: ignore[return-value]
 
 
+def saturate(color: RGB, amount: float) -> RGB:
+    """Adjust saturation while preserving the color's approximate luminance."""
+    gray = round(0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2])
+    return tuple(
+        max(0, min(255, round(gray + (channel - gray) * max(0.0, amount))))
+        for channel in color
+    )  # type: ignore[return-value]
+
+
 def palette_color(palette: tuple[RGB, ...], position: float) -> RGB:
     position %= 1.0
     scaled = position * len(palette)

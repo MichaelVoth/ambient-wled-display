@@ -3,7 +3,11 @@
   "output_enabled": false,
   "palette": ["#06142e", "#075f73", "#42a6a1", "#bac7bd"],
   "palette_speed": 0.018,
+  "cloud_scale": 1.0,
+  "saturation": 1.0,
+  "ambient_brightness": 1.0,
   "log_path": "/data/ambient-renderer.jsonl",
+  "settings_path": "/data/ambient-settings.json",
   "devices": [
     {
       "id": "office-wall",

@@ -25,6 +25,11 @@ No terminal command is required. Docker starts the renderer after a Pi reboot.
    a real test. In continuous mode both use the same central timeline.
 4. Use **Cancel** at any point to return to the renderer's ambient base.
 
+Use the **Ambient nebula** panel to choose a named color look or edit all five
+palette colors directly. The slow Ocean look is the current office default.
+Changes are written to the renderer's persistent data volume and do not require
+a container restart.
+
 In Home Assistant, run **Test Ambient Renderer Hour** and choose a value from
 0–23. The normal hourly automation calls this same renderer path when the WLED
 renderer is active. Home Assistant now calls renderer-native signals for the
@@ -59,6 +64,8 @@ ownership.
   `AMBIENT_RENDERER_IDLE_MODE=renderer` restores continuous ownership.
 - If the renderer container stops, WLED returns to its current preset after the
   realtime timeout.
+- Ambient color controls are stored in `/data/ambient-settings.json` inside the
+  renderer data volume. Deployment configuration remains the fallback.
 - Receiver health is not inferred from the Pi sender. The control center probes
   WLED every five seconds and reports its display FPS and current realtime owner.
 - Home Assistant backups created during this installation end in

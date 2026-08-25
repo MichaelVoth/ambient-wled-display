@@ -39,6 +39,10 @@ class RendererConfig:
     palette_speed: float
     devices: tuple[DeviceConfig, ...]
     log_path: str
+    settings_path: str = "/data/ambient-settings.json"
+    cloud_scale: float = 1.0
+    saturation: float = 1.0
+    ambient_brightness: float = 1.0
 
 
 def _required(data: dict[str, Any], key: str, context: str) -> Any:
@@ -115,11 +119,27 @@ def load_config(path: str | Path) -> RendererConfig:
     palette = tuple(data.get("palette", ["#07152f", "#0d7781", "#a7c4c7"]))
     if len(palette) < 2:
         raise ValueError("palette must contain at least two colors")
+    palette_speed = float(data.get("palette_speed", 0.018))
+    cloud_scale = float(data.get("cloud_scale", 1.0))
+    saturation = float(data.get("saturation", 1.0))
+    ambient_brightness = float(data.get("ambient_brightness", 1.0))
+    for name, value, low, high in (
+        ("palette_speed", palette_speed, 0.001, 0.08),
+        ("cloud_scale", cloud_scale, 0.3, 3.0),
+        ("saturation", saturation, 0.0, 2.0),
+        ("ambient_brightness", ambient_brightness, 0.05, 1.0),
+    ):
+        if not low <= value <= high:
+            raise ValueError(f"{name} must be between {low} and {high}")
     return RendererConfig(
         fps=fps,
         output_enabled=bool(data.get("output_enabled", False)),
         palette=palette,
-        palette_speed=float(data.get("palette_speed", 0.018)),
+        palette_speed=palette_speed,
         devices=tuple(devices),
         log_path=str(data.get("log_path", "/tmp/ambient-renderer.jsonl")),
+        settings_path=str(data.get("settings_path", "/data/ambient-settings.json")),
+        cloud_scale=cloud_scale,
+        saturation=saturation,
+        ambient_brightness=ambient_brightness,
     )

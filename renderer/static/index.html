@@ -34,6 +34,12 @@
     pre { white-space:pre-wrap; color:#b9c8db; font-size:12px; }
     .ok { color:#80e6a4; } .bad { color:#ff8a86; }
     .notice { min-height:22px; margin-top:10px; color:var(--muted); }
+    .control-grid { display:grid; grid-template-columns:1fr auto; gap:8px 12px; align-items:center; }
+    .control-grid label { margin:6px 0; }
+    .control-grid input[type="range"] { width:180px; padding:0; }
+    .colors { display:flex; gap:8px; flex-wrap:wrap; }
+    .colors input[type="color"] { width:48px; height:42px; padding:3px; cursor:pointer; }
+    output { min-width:52px; color:#d8e5f5; text-align:right; }
     @media (max-width:800px) { main { grid-template-columns:1fr; } }
   </style>
 </head>
@@ -64,6 +70,37 @@
           </select>
           <button id="setMode">Apply</button>
         </div>
+      </section>
+      <section style="margin-top:20px">
+        <h2>Ambient nebula</h2>
+        <p style="color:var(--muted);margin-top:-6px">Broad color clouds continuously drift, blend, and introduce new colors beneath every information layer.</p>
+        <label for="ambientPreset">Color look</label>
+        <div class="row">
+          <select id="ambientPreset">
+            <option value="custom">Custom</option>
+          </select>
+          <button id="loadPreset">Load look</button>
+        </div>
+        <label>Palette</label>
+        <div class="colors" id="ambientColors">
+          <input type="color" aria-label="Color 1">
+          <input type="color" aria-label="Color 2">
+          <input type="color" aria-label="Color 3">
+          <input type="color" aria-label="Color 4">
+          <input type="color" aria-label="Color 5">
+        </div>
+        <div class="control-grid" style="margin-top:14px">
+          <label for="ambientSpeed">Color drift</label>
+          <div class="row"><input id="ambientSpeed" type="range" min="0.001" max="0.04" step="0.001"><output id="ambientSpeedValue"></output></div>
+          <label for="ambientScale">Cloud size</label>
+          <div class="row"><input id="ambientScale" type="range" min="0.3" max="3" step="0.1"><output id="ambientScaleValue"></output></div>
+          <label for="ambientSaturation">Color intensity</label>
+          <div class="row"><input id="ambientSaturation" type="range" min="0" max="2" step="0.05"><output id="ambientSaturationValue"></output></div>
+          <label for="ambientBrightness">Brightness</label>
+          <div class="row"><input id="ambientBrightness" type="range" min="0.05" max="1" step="0.05"><output id="ambientBrightnessValue"></output></div>
+        </div>
+        <div class="row" style="margin-top:14px"><button id="applyAmbient" class="primary">Apply smooth transition</button></div>
+        <div id="ambientNotice" class="notice">Changes crossfade over three seconds and are saved across restarts.</div>
       </section>
       <section style="margin-top:20px">
         <h2>Test information</h2>
@@ -101,7 +138,7 @@
     </section>
   </main>
   <script>
-    let config=null,status=null;
+    let config=null,status=null,ambientInitialized=false;
     async function api(path, body) {
       const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
       const response=await fetch(path,options); const data=await response.json();
@@ -130,6 +167,25 @@
         }
       }
     }
+    function setPalette(colors) {
+      const inputs=[...document.querySelectorAll('#ambientColors input')];
+      inputs.forEach((input,index)=>input.value=colors[index%colors.length]);
+    }
+    function updateAmbientLabels() {
+      const speed=+document.querySelector('#ambientSpeed').value;
+      document.querySelector('#ambientSpeedValue').textContent=`${Math.round(1/speed)} sec`;
+      document.querySelector('#ambientScaleValue').textContent=`${document.querySelector('#ambientScale').value}×`;
+      document.querySelector('#ambientSaturationValue').textContent=`${document.querySelector('#ambientSaturation').value}×`;
+      document.querySelector('#ambientBrightnessValue').textContent=`${Math.round(+document.querySelector('#ambientBrightness').value*100)}%`;
+    }
+    function loadAmbient(ambient) {
+      setPalette(ambient.palette);
+      document.querySelector('#ambientSpeed').value=ambient.speed;
+      document.querySelector('#ambientScale').value=ambient.cloud_scale;
+      document.querySelector('#ambientSaturation').value=ambient.saturation;
+      document.querySelector('#ambientBrightness').value=ambient.brightness;
+      updateAmbientLabels(); ambientInitialized=true;
+    }
     async function refresh() {
       try {
         const [nextStatus,frame]=await Promise.all([api('/api/status'),api('/api/frame')]); status=nextStatus;
@@ -142,6 +198,7 @@
         document.querySelector('#modeText').textContent=status.mode;
         document.querySelector('#mode').value=status.mode;
         document.querySelector('#eventText').textContent=status.active_event?`${status.active_event.kind}: ${status.active_event.phase}`:'None';
+        if(!ambientInitialized) loadAmbient(status.ambient);
         document.querySelector('#details').textContent=JSON.stringify({health_issues:status.health_issues,layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,deadline_misses:status.deadline_misses,frame_interval_p95_ms:status.frame_interval_p95_ms,frame_interval_max_ms:status.frame_interval_max_ms,send_duration_p95_ms:status.send_duration_p95_ms,receiver_status:status.receiver_status,temporary_ownership:status.output_lease_return_mode,output_validation:status.output_validation},null,2);
         draw(frame.frames);
       } catch(error) { document.querySelector('#health').textContent=error.message; document.querySelector('#health').className='bad'; }
@@ -151,7 +208,15 @@
       try { await work(); notice.textContent=success; notice.className='notice ok'; await refresh(); }
       catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
     }
-    async function init() { config=await api('/api/config'); buildDevices(); await refresh(); setInterval(refresh,200); }
+    async function init() {
+      config=await api('/api/config'); buildDevices();
+      const preset=document.querySelector('#ambientPreset');
+      for(const name of Object.keys(config.ambient_presets)) {
+        const option=document.createElement('option'); option.value=name;
+        option.textContent=name.charAt(0).toUpperCase()+name.slice(1); preset.appendChild(option);
+      }
+      await refresh(); setInterval(refresh,200);
+    }
     document.querySelector('#setMode').onclick=()=>action(()=>api('/api/mode',{mode:document.querySelector('#mode').value}),'Output mode updated.');
     document.querySelector('#previewHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:false}),'Preview started.');
     document.querySelector('#runHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:true}),'WLED preflight passed. Temporary output started.');
@@ -159,6 +224,21 @@
     document.querySelector('#alert').onclick=()=>action(()=>api('/api/events/alert',{color:'#ff351f',duration:6}),'Urgent alert started.');
     for(const button of document.querySelectorAll('[data-signal]')) button.onclick=()=>action(()=>api('/api/events/signal',{signal:button.dataset.signal,take_output:true}),`${button.textContent} started.`);
     for(const button of document.querySelectorAll('[data-layer]')) button.onclick=()=>action(()=>api(`/api/layers/${button.dataset.layer}`,{enabled:!status.layers[button.dataset.layer]}),`${button.dataset.layer} layer updated.`);
+    for(const slider of document.querySelectorAll('.control-grid input')) slider.oninput=updateAmbientLabels;
+    document.querySelector('#loadPreset').onclick=()=>{
+      const name=document.querySelector('#ambientPreset').value;
+      if(name!=='custom') setPalette(config.ambient_presets[name]);
+    };
+    document.querySelector('#applyAmbient').onclick=async()=>{
+      const notice=document.querySelector('#ambientNotice');
+      try {
+        const palette=[...document.querySelectorAll('#ambientColors input')].map(input=>input.value);
+        const body={palette,speed:+document.querySelector('#ambientSpeed').value,cloud_scale:+document.querySelector('#ambientScale').value,saturation:+document.querySelector('#ambientSaturation').value,brightness:+document.querySelector('#ambientBrightness').value};
+        const result=await api('/api/ambient',body); loadAmbient(result.ambient);
+        document.querySelector('#ambientPreset').value='custom';
+        notice.textContent='Nebula settings saved. Smooth transition in progress.'; notice.className='notice ok';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    };
     init();
   </script>
 </body>

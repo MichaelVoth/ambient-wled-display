@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .color import BLACK, RGB, mix, palette_color, scale, smoothstep
+from .color import BLACK, RGB, mix, palette_color, saturate, scale, smoothstep
 from .config import DeviceConfig, LaneConfig
 
 
@@ -152,6 +152,9 @@ def render_base(
     focus: bool,
     rain_lanes: tuple[LaneConfig, ...] | None = None,
     focus_lanes: tuple[LaneConfig, ...] | None = None,
+    cloud_scale: float = 1.0,
+    saturation: float = 1.0,
+    ambient_brightness: float = 1.0,
 ) -> list[RGB]:
     frame = [BLACK] * device.pixel_count
     rain_lane_ids = None if rain_lanes is None else {lane.id for lane in rain_lanes}
@@ -159,10 +162,20 @@ def render_base(
     for lane_number, lane in enumerate(device.lanes):
         for absolute in range(lane.start, lane.start + lane.length):
             vertical = lane_distance_from_top(lane, absolute)
-            roll = now * palette_speed + lane_number * 0.03
-            color = palette_color(palette, vertical * 0.78 + roll)
-            breath = 0.92 + 0.08 * math.sin(now * 0.38 + vertical * math.tau)
-            color = scale(color, breath * device.brightness)
+            # Three broad, slowly interfering waves create a cloudlike field.
+            # The palette itself continuously rolls, so new colors enter at the
+            # edges while existing clouds stretch and dissolve in place.
+            drift = now * palette_speed
+            spatial = vertical * (0.72 / max(0.3, cloud_scale))
+            warp = (
+                0.095 * math.sin(vertical * math.tau * 1.3 + drift * math.tau * 0.73)
+                + 0.052 * math.sin(vertical * math.tau * 2.7 - drift * math.tau * 0.41)
+                + 0.025 * math.sin(vertical * math.tau * 5.1 + drift * math.tau * 0.19)
+            )
+            color = palette_color(palette, spatial + drift + warp + lane_number * 0.03)
+            breath = 0.94 + 0.06 * math.sin(now * 0.21 + vertical * math.tau * 0.8)
+            color = saturate(color, saturation)
+            color = scale(color, breath * device.brightness * ambient_brightness)
             if rain and (rain_lane_ids is None or lane.id in rain_lane_ids):
                 # Cool the complete palette, then add narrow downward-moving
                 # cyan drops. The motion is deterministic and continuous, so

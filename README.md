@@ -26,6 +26,7 @@ pixel frames, then sends those frames through WLED's realtime UDP interface.
 
 - Top-down 12-hour cumulative bell-toll display
 - Persistent animated rain context
+- Persistent lava-lamp-like nebula with editable palettes and motion controls
 - Calm reminder, success, warning, and work-celebration signals
 - Explicit multi-output lane configuration and synchronized rendering
 - Browser control center with an exact physical-lane simulator
@@ -179,6 +180,9 @@ documented in [.env.example](.env.example).
 Renderer-specific device layout and output settings live in the untracked
 `renderer-config.json`; [renderer/config.example.json](renderer/config.example.json)
 documents every currently supported field.
+
+Everyday ambient palette, cloud, saturation, speed, and brightness choices are
+made in the control center and persisted separately from deployment settings.
 
 The default values are examples only:
 

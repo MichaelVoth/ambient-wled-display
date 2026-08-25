@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from .color import parse_hex
 from .engine import RendererEngine
+from .engine import AMBIENT_PRESETS
 
 
 LOGGER = logging.getLogger(__name__)
@@ -42,7 +43,13 @@ class RendererHandler(BaseHTTPRequestHandler):
             self._json({"frames": self.server.engine.frame_snapshot()})
         elif path == "/api/config":
             status = self.server.engine.status()
-            self._json({"devices": status["devices"], "fps": status["fps_target"]})
+            self._json({
+                "devices": status["devices"],
+                "fps": status["fps_target"],
+                "ambient_presets": AMBIENT_PRESETS,
+            })
+        elif path == "/api/ambient":
+            self._json(self.server.engine.status()["ambient"])
         elif path == "/health":
             status = self.server.engine.status()
             self._json({"ok": status["ok"], "mode": status["mode"]})
@@ -104,6 +111,8 @@ class RendererHandler(BaseHTTPRequestHandler):
             elif path == "/api/mode":
                 self.server.engine.set_mode(str(body.get("mode", "preview")))
                 self._json({"ok": True, "mode": self.server.engine.status()["mode"]})
+            elif path == "/api/ambient":
+                self._json({"ok": True, "ambient": self.server.engine.set_ambient(body)})
             else:
                 self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         except (ValueError, TypeError, json.JSONDecodeError) as exc:

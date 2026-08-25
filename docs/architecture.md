@@ -52,7 +52,8 @@ memory and sends one unambiguous final color for every pixel.
 
 The initial stack is:
 
-1. **Ambient baseline** — a slowly rolling, configurable gradient.
+1. **Ambient baseline** — configurable overlapping color clouds that drift,
+   warp, and continuously introduce the next palette colors without resetting.
 2. **Rain** — a cooled palette with narrow cyan drops moving downward.
 3. **Focus** — a persistent brightness reduction.
 4. **Hourly event** — an eight-second feathered wipe, cumulative bell tolls,
@@ -69,6 +70,9 @@ Named semantic events sit between the hourly clock and urgent alerts:
 
 Adding a layer does not require changing WLED presets or segment topology. A
 new layer implements a color transformation and declares its semantic meaning.
+The ambient palette, drift speed, cloud scale, saturation, and brightness are
+runtime settings. Changes crossfade and persist independently of the deployment
+configuration.
 
 ## Priority and ownership
 
