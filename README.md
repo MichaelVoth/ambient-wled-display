@@ -25,6 +25,8 @@ pixel frames, then sends those frames through WLED's realtime UDP interface.
 ## Features
 
 - Top-down 12-hour cumulative bell-toll display
+- Persistent animated rain context
+- Calm reminder, success, warning, and work-celebration signals
 - Explicit multi-output lane configuration and synchronized rendering
 - Browser control center with an exact physical-lane simulator
 - Stable configurable UDP realtime output instead of HTTP animation choreography

@@ -12,7 +12,14 @@ sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "renderer"))
 from ambient_renderer.color import BLACK  # noqa: E402
 from ambient_renderer.config import DeviceConfig, LaneConfig, RendererConfig, load_config  # noqa: E402
 from ambient_renderer.ddp import DDP_PUSH, encode_packet, encode_packets  # noqa: E402
-from ambient_renderer.effects import HourEvent, HourTiming, render_hour  # noqa: E402
+from ambient_renderer.effects import (  # noqa: E402
+    HourEvent,
+    HourTiming,
+    SignalEvent,
+    render_base,
+    render_hour,
+    render_signal,
+)
 from ambient_renderer.engine import RendererEngine  # noqa: E402
 from ambient_renderer.output import DRGB_PROTOCOL, encode_drgb  # noqa: E402
 
@@ -88,6 +95,34 @@ class RendererTests(unittest.TestCase):
         event = HourEvent(1, 0, timing)
         restored = render_hour(base, device, event, event.duration)
         self.assertEqual(restored, base)
+
+    def test_every_semantic_signal_restores_exactly_to_base(self):
+        device = self.device()
+        base = [(90, 60, 30)] * 278
+        for name in ("reminder", "success", "warning", "celebration"):
+            event = SignalEvent(name, 0)
+            active = render_signal(base, device, event, 1.0)
+            restored = render_signal(base, device, event, float(event.duration))
+            self.assertNotEqual(active, base, name)
+            self.assertEqual(restored, base, name)
+
+    def test_reminder_is_concentrated_in_visible_top_third(self):
+        device = self.device()
+        base = [(20, 20, 20)] * 278
+        event = SignalEvent("reminder", 0)
+        frame = render_signal(base, device, event, 2.0)
+        top = frame[138]
+        bottom = frame[0]
+        self.assertGreater(sum(top), sum(bottom))
+
+    def test_rain_has_smooth_downward_blue_drops(self):
+        device = self.device()
+        palette = ((6, 20, 46), (66, 166, 161))
+        dry = render_base(device, 10.0, palette, 0.018, False, False)
+        rainy_now = render_base(device, 10.0, palette, 0.018, True, False)
+        rainy_later = render_base(device, 10.2, palette, 0.018, True, False)
+        self.assertNotEqual(rainy_now, dry)
+        self.assertNotEqual(rainy_now, rainy_later)
 
     def test_sweep_finishes_at_black_before_tolls_begin(self):
         device = self.device()
@@ -182,6 +217,29 @@ class RendererTests(unittest.TestCase):
                 rejected = engine.trigger_hour(10)
                 self.assertFalse(rejected["accepted"])
                 self.assertIn("music", rejected["reason"])
+            finally:
+                engine.stop()
+
+    def test_semantic_signal_priority_and_validation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = RendererConfig(
+                fps=30,
+                output_enabled=False,
+                palette=("#000000", "#ffffff"),
+                palette_speed=0.01,
+                devices=(self.device(),),
+                log_path=str(pathlib.Path(directory) / "events.jsonl"),
+            )
+            engine = RendererEngine(config)
+            engine._validate_outputs = lambda: None
+            try:
+                with self.assertRaisesRegex(ValueError, "unknown signal"):
+                    engine.trigger_signal("mystery", take_output=True)
+                self.assertEqual(engine.status()["mode"], "preview")
+                self.assertEqual(engine.trigger_signal("reminder")["disposition"], "started")
+                result = engine.trigger_signal("warning")
+                self.assertEqual(result["disposition"], "replaced_lower_priority")
+                self.assertEqual(engine.status()["active_event"]["signal"], "warning")
             finally:
                 engine.stop()
 

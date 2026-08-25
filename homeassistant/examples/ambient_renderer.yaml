@@ -14,6 +14,14 @@ rest_command:
     content_type: application/json
     payload: '{"enabled": {{ enabled | bool | lower }}}'
 
+  ambient_renderer_signal:
+    url: "http://127.0.0.1:8090/api/events/signal"
+    method: POST
+    content_type: application/json
+    payload: >-
+      {"signal": "{{ signal }}",
+       "take_output": {{ take_output | default(false) | bool | lower }}}
+
   ambient_renderer_mode:
     url: "http://127.0.0.1:8090/api/mode"
     method: POST
@@ -36,6 +44,10 @@ rest:
           - last_event
           - last_error
           - output_error
+          - health_issues
+          - fps_recent
+          - deadline_misses
+          - receiver_status
 
 script:
   ambient_renderer_test_hour:
@@ -52,6 +64,42 @@ script:
       - action: rest_command.ambient_renderer_hour
         data:
           hour: "{{ hour | int }}"
+          take_output: true
+
+  ambient_renderer_work_celebration:
+    alias: Ambient Renderer Work Celebration
+    mode: restart
+    sequence:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: celebration
+          take_output: true
+
+  ambient_renderer_lunch_reminder:
+    alias: Ambient Renderer Lunch Reminder
+    mode: restart
+    sequence:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: reminder
+          take_output: true
+
+  ambient_renderer_success:
+    alias: Ambient Renderer Success Wave
+    mode: restart
+    sequence:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: success
+          take_output: true
+
+  ambient_renderer_warning:
+    alias: Ambient Renderer Warning Pulse
+    mode: restart
+    sequence:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: warning
           take_output: true
 
 automation:
@@ -75,3 +123,94 @@ automation:
           hour: "{{ now().hour }}"
           take_output: true
     mode: single
+
+  - id: ambient_renderer_end_of_workday
+    alias: Ambient Renderer End of Workday
+    triggers:
+      - trigger: time
+        at: "16:00:00"
+    conditions:
+      - condition: time
+        weekday: [tue, wed, thu, fri]
+    actions:
+      - action: script.ambient_renderer_work_celebration
+    mode: single
+
+  - id: ambient_renderer_lunch_reminders
+    alias: Ambient Renderer Lunch Reminders
+    triggers:
+      - trigger: time
+        at: "12:01:00"
+      - trigger: time
+        at: "12:10:00"
+      - trigger: time
+        at: "12:20:00"
+    conditions:
+      - condition: time
+        weekday: [mon, tue, wed, thu, fri]
+    actions:
+      - action: script.ambient_renderer_lunch_reminder
+    mode: single
+
+  - id: ambient_renderer_rain_start
+    alias: Ambient Renderer Rain Start
+    triggers:
+      - trigger: state
+        entity_id: weather.home
+        to: [rainy, pouring, lightning-rainy, snowy-rainy, hail]
+        for: "00:05:00"
+    actions:
+      - action: rest_command.ambient_renderer_layer
+        data:
+          layer: rain
+          enabled: true
+    mode: restart
+
+  - id: ambient_renderer_rain_stop
+    alias: Ambient Renderer Rain Stop
+    triggers:
+      - trigger: state
+        entity_id: weather.home
+        from: [rainy, pouring, lightning-rainy, snowy-rainy, hail]
+        for: "00:20:00"
+    actions:
+      - action: rest_command.ambient_renderer_layer
+        data:
+          layer: rain
+          enabled: false
+    mode: restart
+
+  - id: ambient_renderer_service_warning
+    alias: Ambient Renderer Service Warning
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.pi_hole_status
+        to: "off"
+        for: "00:00:20"
+    actions:
+      - action: script.ambient_renderer_warning
+    mode: restart
+
+  - id: ambient_renderer_high_energy_warning
+    alias: Ambient Renderer High Energy Warning
+    triggers:
+      - trigger: time
+        at: "10:30:00"
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.pse_high_usage_day
+        state: "on"
+    actions:
+      - action: script.ambient_renderer_warning
+    mode: single
+
+  - id: ambient_renderer_github_build_failed
+    alias: Ambient Renderer GitHub Build Failed
+    triggers:
+      - trigger: webhook
+        webhook_id: !secret ambient_wled_github_webhook_id
+        allowed_methods: [POST]
+        local_only: false
+    actions:
+      - action: script.ambient_renderer_warning
+    mode: restart

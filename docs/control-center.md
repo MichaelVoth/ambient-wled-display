@@ -21,8 +21,10 @@ physical output is enabled.
 
 Choose an hour from 0–23 and select **Run hour**. The 12-hour count is derived
 automatically. **Toggle rain** and **Toggle focus** demonstrate persistent
-layers. **Test urgent alert** demonstrates priority replacement. **Cancel**
-returns immediately to the continuously rendered base.
+layers. The information-signal buttons run a calm reminder, green success
+wave, amber warning, or multicolor work celebration. The urgent red alert
+demonstrates priority replacement. **Cancel** returns immediately to the
+continuously rendered base.
 
 ## API examples
 
@@ -54,6 +56,16 @@ curl -X POST http://raspberrypi.local:8090/api/layers/rain \
   -d '{"enabled":true}'
 ```
 
+Named signals use a fixed visual vocabulary rather than arbitrary presets:
+
+```bash
+curl -X POST http://raspberrypi.local:8090/api/events/signal \
+  -H 'Content-Type: application/json' \
+  -d '{"signal":"celebration","take_output":true}'
+```
+
+Supported signals are `reminder`, `success`, `warning`, and `celebration`.
+
 ```bash
 curl -X POST http://raspberrypi.local:8090/api/mode \
   -H 'Content-Type: application/json' \
@@ -62,7 +74,7 @@ curl -X POST http://raspberrypi.local:8090/api/mode \
 
 ## Recovery
 
-Stopping the renderer does not rewrite or delete WLED configuration. Once DDP
+Stopping the renderer does not rewrite or delete WLED configuration. Once UDP realtime
 traffic stops, WLED leaves realtime mode after its normal timeout and returns
 to its existing preset. The WLED web interface therefore remains a usable
 fallback and troubleshooting tool.

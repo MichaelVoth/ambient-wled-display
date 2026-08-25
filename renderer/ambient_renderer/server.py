@@ -75,6 +75,22 @@ class RendererHandler(BaseHTTPRequestHandler):
                     self.server.engine.trigger_alert(color, duration, self._targets(body)),
                     HTTPStatus.ACCEPTED,
                 )
+            elif path == "/api/events/signal":
+                signal = str(body.get("signal", ""))
+                duration = body.get("duration")
+                duration = float(duration) if duration is not None else None
+                take_output = body.get("take_output", False)
+                if not isinstance(take_output, bool):
+                    raise ValueError("take_output must be true or false")
+                self._json(
+                    self.server.engine.trigger_signal(
+                        signal,
+                        duration=duration,
+                        take_output=take_output,
+                        targets=self._targets(body),
+                    ),
+                    HTTPStatus.ACCEPTED,
+                )
             elif path == "/api/events/cancel":
                 self.server.engine.cancel_event()
                 self._json({"ok": True})

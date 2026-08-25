@@ -27,10 +27,11 @@ No terminal command is required. Docker starts the renderer after a Pi reboot.
 
 In Home Assistant, run **Test Ambient Renderer Hour** and choose a value from
 0–23. The normal hourly automation calls this same renderer path when the WLED
-renderer is active. Home Assistant releases renderer ownership for midnight,
-arrival/departure, morning startup, and the Tuesday–Friday 4 PM legacy
-celebration, then restores continuous ownership when appropriate. Rain is now a
-persistent renderer layer.
+renderer is active. Home Assistant now calls renderer-native signals for the
+Tuesday–Friday 4 PM celebration, weekday lunch reminders, Pi-hole failures,
+GitHub build failures, and high-energy-use warnings. Rain is a persistent
+renderer layer. Only midnight, arrival/departure, and morning startup still
+temporarily use legacy WLED sweep presets.
 
 ## Adding another strip
 
@@ -61,7 +62,8 @@ ownership.
 - Receiver health is not inferred from the Pi sender. The control center probes
   WLED every five seconds and reports its display FPS and current realtime owner.
 - Home Assistant backups created during this installation end in
-  `.bak-renderer-20260824` beside the active YAML files.
+  `.bak-renderer-20260824` or `.bak-semantic-signals-20260824` beside the active
+  YAML files.
 - The legacy hourly Python controller remains in the Home Assistant config as a
   rollback artifact, but nothing calls it now.
 
@@ -70,8 +72,10 @@ ownership.
 The current system is deliberately in mixed mode: the renderer continuously
 owns the ambient base, hourly timeline, and rain layer for the connected office
 lane. Home Assistant temporarily releases it for legacy morning, midnight,
-arrival, departure, and celebration presets. Lunch and additional notification
-effects are the next candidates to migrate into named renderer events.
+arrival, and departure presets. The work celebration, lunch reminder, Pi-hole
+warning, GitHub build warning, and high-energy-use warning are renderer-native
+events. Arrival/departure and morning/midnight power choreography are the next
+candidates to migrate.
 
 See [the performance audit](performance-audit.md) for the 9 PM stutter root
 cause, live benchmark, and remaining capacity work.

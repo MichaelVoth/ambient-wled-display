@@ -53,12 +53,19 @@ memory and sends one unambiguous final color for every pixel.
 The initial stack is:
 
 1. **Ambient baseline** — a slowly rolling, configurable gradient.
-2. **Rain** — a persistent blue ripple blended into the baseline.
+2. **Rain** — a cooled palette with narrow cyan drops moving downward.
 3. **Focus** — a persistent brightness reduction.
 4. **Hourly event** — an eight-second feathered wipe, cumulative bell tolls,
    five-second hold, and three-second crossfade back to the still-moving base.
 5. **Urgent alert** — a higher-priority pulse that may replace a lower-priority
    event.
+
+Named semantic events sit between the hourly clock and urgent alerts:
+
+- reminder — amber beacon in the visible top third;
+- success — green upward completion wave;
+- celebration — multicolor launches and expanding one-dimensional bursts;
+- warning — amber full-lane pulse.
 
 Adding a layer does not require changing WLED presets or segment topology. A
 new layer implements a color transformation and declares its semantic meaning.

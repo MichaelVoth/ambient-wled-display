@@ -14,7 +14,15 @@ from typing import Any
 
 from .color import RGB, parse_hex
 from .config import RendererConfig
-from .effects import AlertEvent, HourEvent, render_alert, render_base, render_hour
+from .effects import (
+    AlertEvent,
+    HourEvent,
+    SignalEvent,
+    render_alert,
+    render_base,
+    render_hour,
+    render_signal,
+)
 from .output import create_output
 
 
@@ -32,8 +40,8 @@ class RendererEngine:
         self.mode = "renderer" if config.output_enabled else "preview"
         self.layers = {"rain": False, "focus": False}
         self.layer_targets: dict[str, tuple[str, ...] | None] = {"rain": None, "focus": None}
-        self.active_event: HourEvent | AlertEvent | None = None
-        self.event_queue: deque[HourEvent | AlertEvent] = deque()
+        self.active_event: HourEvent | AlertEvent | SignalEvent | None = None
+        self.event_queue: deque[HourEvent | AlertEvent | SignalEvent] = deque()
         self.frames: dict[str, list[RGB]] = {
             device.id: [(0, 0, 0)] * device.pixel_count for device in config.devices
         }
@@ -159,7 +167,26 @@ class RendererEngine:
         )
         return self._submit_event(event)
 
-    def _submit_event(self, event: HourEvent | AlertEvent) -> dict[str, Any]:
+    def trigger_signal(
+        self,
+        signal: str,
+        duration: float | None = None,
+        take_output: bool = False,
+        targets: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        if duration is not None and not 1.0 <= duration <= 60.0:
+            raise ValueError("duration must be between 1 and 60 seconds")
+        event = SignalEvent(
+            signal=signal,
+            started_at=time.monotonic(),
+            duration=duration,
+            targets=self._normalize_targets(targets),
+        )
+        if take_output:
+            self._lease_output_for_events()
+        return self._submit_event(event)
+
+    def _submit_event(self, event: HourEvent | AlertEvent | SignalEvent) -> dict[str, Any]:
         with self.lock:
             if self.mode in {"music", "off"}:
                 return {"accepted": False, "reason": f"renderer is in {self.mode} mode"}
@@ -263,6 +290,10 @@ class RendererEngine:
                 target_lanes = self._target_lanes(device, event.targets)
                 if target_lanes:
                     frame = render_alert(frame, device, event, now, target_lanes)
+            elif isinstance(event, SignalEvent):
+                target_lanes = self._target_lanes(device, event.targets)
+                if target_lanes:
+                    frame = render_signal(frame, device, event, now, target_lanes)
             self.frames[device.id] = frame
             if mode == "renderer":
                 send_started = time.monotonic()
@@ -283,7 +314,7 @@ class RendererEngine:
 
     def _event_summary(
         self,
-        event: HourEvent | AlertEvent,
+        event: HourEvent | AlertEvent | SignalEvent,
         now: float,
         result: str | None = None,
     ) -> dict[str, Any]:
@@ -297,6 +328,9 @@ class RendererEngine:
         if isinstance(event, HourEvent):
             summary["hour"] = event.hour
             summary["count"] = event.count
+        elif isinstance(event, SignalEvent):
+            summary["signal"] = event.signal
+            summary["duration"] = event.duration
         summary["targets"] = list(event.targets) if event.targets else "all"
         if result:
             summary["result"] = result
