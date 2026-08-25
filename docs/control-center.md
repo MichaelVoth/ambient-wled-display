@@ -32,17 +32,23 @@ The normal background is a continuous nebula rather than a looping WLED
 preset. Broad color clouds overlap, stretch, and dissolve while the palette
 slowly enters from the edges. There is no frame where the animation resets.
 
-The control center provides:
+In **House chooses automatically**, local time selects the broad emotional arc:
+dawn, morning, daylight, golden afternoon, evening, or night. Home Assistant
+then modifies it with weather, temperature, and wind. Rain also enables a
+stateful water layer: drops begin at irregular positions, fall at different
+speeds, accelerate, and merge into faster rivulets.
 
-- five editable palette colors;
-- Ocean, Aurora, Cosmic, Sunset, and Ember starting looks;
+The control center also provides a **manual** mode with:
+
+- seven editable palette colors;
+- Living, Ocean, Aurora, Cosmic, Sunset, and Ember starting looks;
 - color-drift speed, shown as seconds per complete palette cycle;
 - cloud size;
 - saturation; and
 - ambient brightness.
 
-Select a starting look, adjust any colors or sliders, and choose **Apply smooth
-transition**. The old and new configurations crossfade over three seconds. The
+Select a starting look, adjust any colors or sliders, and choose **Use these
+manual colors**. The old and new configurations crossfade over three seconds. The
 result is stored in the renderer data volume and survives service, Pi, and Home
 Assistant restarts. Rain, hourly tolls, and semantic signals are composited on
 top of the chosen nebula.
@@ -61,6 +67,14 @@ one fully restored final frame, and automatically returns to **Simulator
 only**. Existing WLED preset automations then continue normally. Once all
 ambient behaviors have moved into renderer layers, use continuous **Renderer →
 WLED** mode instead.
+
+## Phone access
+
+Open `http://raspberrypi.local:8090` in Safari while connected to home Wi-Fi.
+Use **Share → Add to Home Screen** to install the control center as a home-screen
+app. The Pi starts it automatically; no laptop terminal command is required.
+If a page opened from a `file:///` address says it is the project file, follow
+its live-controller link instead. The project file cannot control the house.
 
 Events and layers can be scoped to configured device or lane IDs. Omitting
 `targets` means every configured lane:
@@ -93,6 +107,22 @@ Ambient settings can also be changed through the API:
 curl -X POST http://raspberrypi.local:8090/api/ambient \
   -H 'Content-Type: application/json' \
   -d '{"preset":"cosmic","speed":0.006,"cloud_scale":1.5,"saturation":1.2,"brightness":0.8}'
+```
+
+Return control to the living house mood:
+
+```bash
+curl -X POST http://raspberrypi.local:8090/api/ambient \
+  -H 'Content-Type: application/json' \
+  -d '{"mode":"adaptive"}'
+```
+
+Home Assistant supplies the environmental context:
+
+```bash
+curl -X POST http://raspberrypi.local:8090/api/context \
+  -H 'Content-Type: application/json' \
+  -d '{"weather":"rainy","temperature":61,"temperature_unit":"°F","humidity":92}'
 ```
 
 ```bash

@@ -37,6 +37,8 @@ class RendererHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in {"/", "/index.html"}:
             self._file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
+        elif path == "/manifest.json":
+            self._file(STATIC_DIR / "manifest.json", "application/manifest+json")
         elif path == "/api/status":
             self._json(self.server.engine.status())
         elif path == "/api/frame":
@@ -50,6 +52,8 @@ class RendererHandler(BaseHTTPRequestHandler):
             })
         elif path == "/api/ambient":
             self._json(self.server.engine.status()["ambient"])
+        elif path == "/api/context":
+            self._json(self.server.engine.status()["context"])
         elif path == "/health":
             status = self.server.engine.status()
             self._json({"ok": status["ok"], "mode": status["mode"]})
@@ -113,6 +117,8 @@ class RendererHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "mode": self.server.engine.status()["mode"]})
             elif path == "/api/ambient":
                 self._json({"ok": True, "ambient": self.server.engine.set_ambient(body)})
+            elif path == "/api/context":
+                self._json({"ok": True, "context": self.server.engine.set_context(body)})
             else:
                 self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         except (ValueError, TypeError, json.JSONDecodeError) as exc:

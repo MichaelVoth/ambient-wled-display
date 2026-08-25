@@ -28,6 +28,24 @@ rest_command:
     content_type: application/json
     payload: '{"preset": "{{ preset }}"}'
 
+  ambient_renderer_adaptive:
+    url: "http://127.0.0.1:8090/api/ambient"
+    method: POST
+    content_type: application/json
+    payload: '{"mode":"adaptive"}'
+
+  ambient_renderer_context:
+    url: "http://127.0.0.1:8090/api/context"
+    method: POST
+    content_type: application/json
+    payload: >-
+      {"weather": {{ states('weather.home') | tojson }},
+       "temperature": {{ state_attr('weather.home', 'temperature') | default(none, true) | tojson }},
+       "temperature_unit": {{ state_attr('weather.home', 'temperature_unit') | default('°F', true) | tojson }},
+       "humidity": {{ state_attr('weather.home', 'humidity') | default(none, true) | tojson }},
+       "cloud_coverage": {{ state_attr('weather.home', 'cloud_coverage') | default(none, true) | tojson }},
+       "wind_speed": {{ state_attr('weather.home', 'wind_speed') | default(none, true) | tojson }}}
+
   ambient_renderer_mode:
     url: "http://127.0.0.1:8090/api/mode"
     method: POST
@@ -54,6 +72,9 @@ rest:
           - fps_recent
           - deadline_misses
           - receiver_status
+          - ambient
+          - context
+          - rain_simulation
 
 script:
   ambient_renderer_test_hour:
@@ -109,6 +130,20 @@ script:
           take_output: true
 
 automation:
+  - id: ambient_renderer_house_context
+    alias: Ambient Renderer House Context
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: state
+        entity_id: weather.home
+      - trigger: time_pattern
+        minutes: "/10"
+    actions:
+      - delay: "00:00:05"
+      - action: rest_command.ambient_renderer_context
+    mode: restart
+
   - id: ambient_renderer_hourly_clock
     alias: Ambient Renderer Hourly Clock
     triggers:

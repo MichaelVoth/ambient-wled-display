@@ -21,7 +21,9 @@ from ambient_renderer.effects import (  # noqa: E402
     render_signal,
 )
 from ambient_renderer.engine import RendererEngine  # noqa: E402
+from ambient_renderer.mood import adaptive_ambient  # noqa: E402
 from ambient_renderer.output import DRGB_PROTOCOL, encode_drgb  # noqa: E402
+from ambient_renderer.rain import Drop, RainField  # noqa: E402
 
 
 class RendererTests(unittest.TestCase):
@@ -123,6 +125,52 @@ class RendererTests(unittest.TestCase):
         rainy_later = render_base(device, 10.2, palette, 0.018, True, False)
         self.assertNotEqual(rainy_now, dry)
         self.assertNotEqual(rainy_now, rainy_later)
+
+    def test_stateful_rain_varies_speed_and_merges_drops(self):
+        device = self.device()
+        field = RainField(seed=7)
+        field.drops["a"] = [
+            Drop(0.20, 0.05, 0.8, 0.1),
+            Drop(0.207, 0.12, 1.1, 0.8),
+        ]
+        field.last_at = 10.0
+        field.update((device.lanes[0],), 10.03, intensity=1.0)
+        self.assertEqual(len(field.drops["a"]), 1)
+        self.assertEqual(field.status()["merged"], 1)
+        self.assertGreater(field.drops["a"][0].velocity, 0.12)
+
+    def test_adaptive_mood_responds_to_weather_and_temperature(self):
+        timestamp = 1_786_000_000.0
+        mild = adaptive_ambient(timestamp, {"weather": "sunny", "temperature": 68, "temperature_unit": "°F"})
+        storm = adaptive_ambient(timestamp, {"weather": "pouring", "temperature": 48, "temperature_unit": "°F"})
+        self.assertNotEqual(mild["palette"], storm["palette"])
+        self.assertIn("sunny", mild["mood"])
+        self.assertIn("pouring", storm["mood"])
+        self.assertGreater(storm["speed"], mild["speed"])
+
+    def test_context_enables_rain_and_adaptive_mode_can_be_restored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = RendererConfig(
+                fps=30,
+                output_enabled=False,
+                palette=("#000000", "#ffffff"),
+                palette_speed=0.01,
+                devices=(self.device(),),
+                log_path=str(pathlib.Path(directory) / "events.jsonl"),
+                settings_path=str(pathlib.Path(directory) / "ambient.json"),
+            )
+            engine = RendererEngine(config)
+            try:
+                context = engine.set_context({"weather": "rainy", "temperature": 61, "humidity": 92})
+                self.assertEqual(context["weather"], "rainy")
+                self.assertTrue(engine.status()["layers"]["rain"])
+                engine.set_ambient({"preset": "cosmic"})
+                self.assertEqual(engine.status()["ambient"]["mode"], "manual")
+                engine.set_ambient({"mode": "adaptive"})
+                self.assertEqual(engine.status()["ambient"]["mode"], "adaptive")
+                self.assertIn("rainy", engine.status()["ambient"]["mood"])
+            finally:
+                engine.stop()
 
     def test_nebula_continuously_introduces_new_colors(self):
         device = self.device()

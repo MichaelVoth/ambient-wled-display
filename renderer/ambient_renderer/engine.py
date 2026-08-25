@@ -24,11 +24,14 @@ from .effects import (
     render_signal,
 )
 from .output import create_output
+from .mood import adaptive_ambient
+from .rain import RainField
 
 
 LOGGER = logging.getLogger(__name__)
 
 AMBIENT_PRESETS = {
+    "living": ["#10143f", "#176b9e", "#25b88a", "#d6c54a", "#e8734f", "#bc4f9d", "#5d45ad"],
     "ocean": ["#06142e", "#075f73", "#42a6a1", "#bac7bd", "#315f8c"],
     "aurora": ["#07112f", "#164e8a", "#16a085", "#65d98b", "#7656b7"],
     "cosmic": ["#09051d", "#30206f", "#c43aa2", "#2179a8", "#35d0c5"],
@@ -43,6 +46,7 @@ class RendererEngine:
         self.log_path = Path(config.log_path)
         self.settings_path = Path(config.settings_path)
         initial_ambient = self._validate_ambient({
+            "mode": "adaptive",
             "palette": list(config.palette),
             "speed": config.palette_speed,
             "cloud_scale": config.cloud_scale,
@@ -60,6 +64,23 @@ class RendererEngine:
         self.ambient_from = initial_ambient
         self.ambient_changed_at = time.monotonic() - 3.0
         self.ambient_transition = 3.0
+        self.context_path = self.settings_path.with_name("house-context.json")
+        self.context = {
+            "weather": "unknown",
+            "temperature": None,
+            "temperature_unit": "°F",
+            "humidity": None,
+            "cloud_coverage": None,
+            "wind_speed": None,
+            "updated_at": None,
+        }
+        try:
+            persisted_context = json.loads(self.context_path.read_text(encoding="utf-8"))
+            self.context = self._validate_context(persisted_context, self.context)
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            LOGGER.warning("could not load house context: %s", exc)
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
@@ -71,6 +92,10 @@ class RendererEngine:
         self.event_queue: deque[HourEvent | AlertEvent | SignalEvent] = deque()
         self.frames: dict[str, list[RGB]] = {
             device.id: [(0, 0, 0)] * device.pixel_count for device in config.devices
+        }
+        self.rain_fields = {
+            device.id: RainField(seed=sum(ord(character) for character in device.id) or 1)
+            for device in config.devices
         }
         self.outputs = {device.id: create_output(device) for device in config.devices}
         self.frames_rendered = 0
@@ -142,6 +167,9 @@ class RendererEngine:
         with self.lock:
             self.layers[name] = bool(enabled)
             self.layer_targets[name] = normalized_targets
+            if name == "rain" and not enabled:
+                for field in self.rain_fields.values():
+                    field.reset()
         self._record(
             "layer_changed",
             layer=name,
@@ -151,6 +179,9 @@ class RendererEngine:
 
     def set_ambient(self, changes: dict[str, Any]) -> dict[str, Any]:
         now = time.monotonic()
+        visual_keys = {"palette", "preset", "speed", "cloud_scale", "saturation", "brightness"}
+        if visual_keys.intersection(changes) and "mode" not in changes:
+            changes = {**changes, "mode": "manual"}
         with self.lock:
             current = self._ambient_at(now)
             updated = self._validate_ambient(changes, self.ambient_target)
@@ -160,6 +191,29 @@ class RendererEngine:
         self._persist_ambient(updated)
         self._record("ambient_changed", ambient=self._ambient_json(updated))
         return self._ambient_json(updated)
+
+    def set_context(self, changes: dict[str, Any]) -> dict[str, Any]:
+        now = time.monotonic()
+        with self.lock:
+            current_ambient = self._ambient_at(now)
+            updated = self._validate_context(changes, self.context)
+            updated["updated_at"] = time.time()
+            self.context = updated
+            weather = str(updated.get("weather") or "unknown").lower()
+            raining = weather in {
+                "rainy", "pouring", "lightning-rainy", "snowy-rainy", "hail"
+            }
+            was_raining = self.layers["rain"]
+            self.layers["rain"] = raining
+            if was_raining and not raining:
+                for field in self.rain_fields.values():
+                    field.reset()
+            if self.ambient_target["mode"] == "adaptive":
+                self.ambient_from = current_ambient
+                self.ambient_changed_at = now
+        self._persist_context(updated)
+        self._record("house_context_changed", context=updated)
+        return dict(updated)
 
     def trigger_hour(
         self,
@@ -292,6 +346,7 @@ class RendererEngine:
             layer_targets = dict(self.layer_targets)
             mode = self.mode
             ambient = self._ambient_at(now)
+            context = dict(self.context)
 
         if event:
             phase = event.phase(now)[0]
@@ -316,7 +371,7 @@ class RendererEngine:
                 now,
                 ambient["palette"],
                 ambient["speed"],
-                rain=layers["rain"] and bool(rain_lanes),
+                rain=False,
                 focus=layers["focus"] and bool(focus_lanes),
                 rain_lanes=rain_lanes,
                 focus_lanes=focus_lanes,
@@ -324,6 +379,14 @@ class RendererEngine:
                 saturation=ambient["saturation"],
                 ambient_brightness=ambient["brightness"],
             )
+            if layers["rain"] and rain_lanes:
+                frame = self.rain_fields[device.id].render(
+                    frame,
+                    device,
+                    now,
+                    rain_lanes,
+                    self._rain_intensity(context),
+                )
             if isinstance(event, HourEvent):
                 target_lanes = self._target_lanes(device, event.targets)
                 if target_lanes:
@@ -428,6 +491,7 @@ class RendererEngine:
                             f"{device.name} reports {receiver.get('live_mode') or 'no'} realtime owner; "
                             f"expected {expected_mode}"
                         )
+            active_ambient = self._ambient_at(now)
             return {
                 "ok": (
                     self.last_error is None
@@ -451,8 +515,12 @@ class RendererEngine:
                 "receiver_status": dict(self.receiver_status),
                 "layers": dict(self.layers),
                 "ambient": {
-                    **self._ambient_json(self.ambient_target),
+                    **self._ambient_json(active_ambient),
                     "transitioning": now - self.ambient_changed_at < self.ambient_transition,
+                },
+                "context": dict(self.context),
+                "rain_simulation": {
+                    device_id: field.status() for device_id, field in self.rain_fields.items()
                 },
                 "layer_targets": {
                     name: list(targets) if targets else "all"
@@ -486,11 +554,17 @@ class RendererEngine:
         changes: dict[str, Any],
         base: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        allowed = {"palette", "speed", "cloud_scale", "saturation", "brightness", "preset"}
+        allowed = {"mode", "palette", "speed", "cloud_scale", "saturation", "brightness", "preset"}
         unknown = set(changes) - allowed
         if unknown:
             raise ValueError("unknown ambient settings: " + ", ".join(sorted(unknown)))
         result = dict(base or {})
+        if "mode" in changes:
+            if changes["mode"] not in {"adaptive", "manual"}:
+                raise ValueError("ambient mode must be adaptive or manual")
+            result["mode"] = changes["mode"]
+        if "mode" not in result:
+            result["mode"] = "adaptive"
         preset = changes.get("preset")
         if preset is not None:
             if preset not in AMBIENT_PRESETS:
@@ -522,15 +596,19 @@ class RendererEngine:
         return result
 
     def _ambient_at(self, now: float) -> dict[str, Any]:
+        second = (
+            {**adaptive_ambient(time.time(), self.context), "mode": "adaptive"}
+            if self.ambient_target["mode"] == "adaptive"
+            else dict(self.ambient_target)
+        )
         progress = smoothstep(
             0.0,
             self.ambient_transition,
             now - self.ambient_changed_at,
         )
         if progress >= 1.0:
-            return dict(self.ambient_target)
+            return second
         first = self.ambient_from
-        second = self.ambient_target
         count = max(len(first["palette"]), len(second["palette"]))
         palette = tuple(
             mix(
@@ -540,23 +618,33 @@ class RendererEngine:
             )
             for index in range(count)
         )
-        return {
+        blended = {
+            "mode": second["mode"],
             "palette": palette,
             **{
                 name: float(first[name]) + (float(second[name]) - float(first[name])) * progress
                 for name in ("speed", "cloud_scale", "saturation", "brightness")
             },
         }
+        for name in ("mood", "time_mood"):
+            if name in second:
+                blended[name] = second[name]
+        return blended
 
     @staticmethod
     def _ambient_json(ambient: dict[str, Any]) -> dict[str, Any]:
-        return {
+        result = {
+            "mode": ambient.get("mode", "adaptive"),
             "palette": ["#%02x%02x%02x" % color for color in ambient["palette"]],
             "speed": round(float(ambient["speed"]), 4),
             "cloud_scale": round(float(ambient["cloud_scale"]), 3),
             "saturation": round(float(ambient["saturation"]), 3),
             "brightness": round(float(ambient["brightness"]), 3),
         }
+        for name in ("mood", "time_mood"):
+            if name in ambient:
+                result[name] = ambient[name]
+        return result
 
     def _persist_ambient(self, ambient: dict[str, Any]) -> None:
         try:
@@ -569,6 +657,63 @@ class RendererEngine:
             temporary.replace(self.settings_path)
         except OSError as exc:
             raise ValueError(f"could not save ambient settings: {exc}") from exc
+
+    @staticmethod
+    def _validate_context(
+        changes: dict[str, Any],
+        base: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        allowed = {
+            "weather", "temperature", "temperature_unit", "humidity",
+            "cloud_coverage", "wind_speed", "updated_at",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown house context: " + ", ".join(sorted(unknown)))
+        result = dict(base or {})
+        if "weather" in changes:
+            result["weather"] = str(changes["weather"] or "unknown").strip().lower()
+        if "temperature_unit" in changes:
+            result["temperature_unit"] = str(changes["temperature_unit"] or "°F")[:8]
+        ranges = {
+            "temperature": (-100.0, 180.0),
+            "humidity": (0.0, 100.0),
+            "cloud_coverage": (0.0, 100.0),
+            "wind_speed": (0.0, 250.0),
+        }
+        for name, (low, high) in ranges.items():
+            if name in changes:
+                value = changes[name]
+                result[name] = None if value is None or value == "" else float(value)
+            if result.get(name) is not None and not low <= float(result[name]) <= high:
+                raise ValueError(f"{name} must be between {low} and {high}")
+        if "updated_at" in changes:
+            result["updated_at"] = changes["updated_at"]
+        return result
+
+    def _persist_context(self, context: dict[str, Any]) -> None:
+        try:
+            self.context_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.context_path.with_suffix(self.context_path.suffix + ".tmp")
+            temporary.write_text(json.dumps(context, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(self.context_path)
+        except OSError as exc:
+            raise ValueError(f"could not save house context: {exc}") from exc
+
+    @staticmethod
+    def _rain_intensity(context: dict[str, Any]) -> float:
+        weather = str(context.get("weather") or "unknown").lower()
+        intensity = {
+            "pouring": 1.8,
+            "lightning-rainy": 1.7,
+            "hail": 1.55,
+            "rainy": 1.0,
+            "snowy-rainy": 0.8,
+        }.get(weather, 0.75)
+        humidity = context.get("humidity")
+        if humidity is not None:
+            intensity += max(0.0, (float(humidity) - 75.0) / 100.0)
+        return intensity
 
     def _monitor_outputs(self) -> None:
         """Probe the receiver outside the render loop so diagnostics cannot cause jitter."""

@@ -25,8 +25,9 @@ pixel frames, then sends those frames through WLED's realtime UDP interface.
 ## Features
 
 - Top-down 12-hour cumulative bell-toll display
-- Persistent animated rain context
-- Persistent lava-lamp-like nebula with editable palettes and motion controls
+- Stateful animated rain with variable drops, acceleration, and merging rivulets
+- Adaptive living nebula shaped by time, weather, temperature, and wind
+- Manual palettes and motion controls when you want a specific look
 - Calm reminder, success, warning, and work-celebration signals
 - Explicit multi-output lane configuration and synchronized rendering
 - Browser control center with an exact physical-lane simulator
@@ -183,6 +184,9 @@ documents every currently supported field.
 
 Everyday ambient palette, cloud, saturation, speed, and brightness choices are
 made in the control center and persisted separately from deployment settings.
+Adaptive mode is the normal default: Home Assistant sends house context while
+the renderer turns that context into a continuously evolving mood. Manual mode
+holds a chosen look until adaptive mode is selected again.
 
 The default values are examples only:
 

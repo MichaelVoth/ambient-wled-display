@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#10143f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="House Lights">
+  <link rel="manifest" href="/manifest.json">
   <title>Ambient Display Control Center</title>
   <style>
     :root { color-scheme: dark; --panel:#141922; --line:#2b3444; --cyan:#55d8e8; --muted:#91a0b5; }
@@ -34,6 +38,9 @@
     pre { white-space:pre-wrap; color:#b9c8db; font-size:12px; }
     .ok { color:#80e6a4; } .bad { color:#ff8a86; }
     .notice { min-height:22px; margin-top:10px; color:var(--muted); }
+    .mood { padding:12px; border-radius:10px; background:linear-gradient(120deg,#182d53,#275a64,#66406f); margin:12px 0; }
+    .mood small { color:#d7e4f2; display:block; }
+    .source-warning { max-width:620px; margin:12vh auto; padding:28px; border:1px solid #b77a35; border-radius:16px; background:#17130f; }
     .control-grid { display:grid; grid-template-columns:1fr auto; gap:8px 12px; align-items:center; }
     .control-grid label { margin:6px 0; }
     .control-grid input[type="range"] { width:180px; padding:0; }
@@ -73,7 +80,16 @@
       </section>
       <section style="margin-top:20px">
         <h2>Ambient nebula</h2>
-        <p style="color:var(--muted);margin-top:-6px">Broad color clouds continuously drift, blend, and introduce new colors beneath every information layer.</p>
+        <p style="color:var(--muted);margin-top:-6px">The house can choose a living palette from time, weather, temperature, and wind—or you can take manual control.</p>
+        <div class="mood"><small>House mood</small><strong id="houseMood">Learning the room…</strong><div id="houseContext" style="color:#d7e4f2;margin-top:3px">Waiting for Home Assistant…</div></div>
+        <label for="ambientMode">Who chooses the palette?</label>
+        <div class="row">
+          <select id="ambientMode">
+            <option value="adaptive">House chooses automatically</option>
+            <option value="manual">I choose manually</option>
+          </select>
+          <button id="useAdaptive" class="primary">Use living house mood</button>
+        </div>
         <label for="ambientPreset">Color look</label>
         <div class="row">
           <select id="ambientPreset">
@@ -88,6 +104,8 @@
           <input type="color" aria-label="Color 3">
           <input type="color" aria-label="Color 4">
           <input type="color" aria-label="Color 5">
+          <input type="color" aria-label="Color 6">
+          <input type="color" aria-label="Color 7">
         </div>
         <div class="control-grid" style="margin-top:14px">
           <label for="ambientSpeed">Color drift</label>
@@ -99,8 +117,14 @@
           <label for="ambientBrightness">Brightness</label>
           <div class="row"><input id="ambientBrightness" type="range" min="0.05" max="1" step="0.05"><output id="ambientBrightnessValue"></output></div>
         </div>
-        <div class="row" style="margin-top:14px"><button id="applyAmbient" class="primary">Apply smooth transition</button></div>
-        <div id="ambientNotice" class="notice">Changes crossfade over three seconds and are saved across restarts.</div>
+        <div class="row" style="margin-top:14px"><button id="applyAmbient">Use these manual colors</button></div>
+        <div id="ambientNotice" class="notice">Adaptive mode evolves continuously. Manual changes crossfade over three seconds.</div>
+      </section>
+      <section style="margin-top:20px">
+        <h2>Phone access</h2>
+        <p>While you are on home Wi-Fi, open <strong>raspberrypi.local:8090</strong> in Safari. Use Share → Add to Home Screen to make it feel like an app.</p>
+        <div class="row"><button id="copyAddress">Copy phone address</button></div>
+        <div id="phoneNotice" class="notice">No terminal command is needed; the Pi runs this control center.</div>
       </section>
       <section style="margin-top:20px">
         <h2>Test information</h2>
@@ -179,6 +203,7 @@
       document.querySelector('#ambientBrightnessValue').textContent=`${Math.round(+document.querySelector('#ambientBrightness').value*100)}%`;
     }
     function loadAmbient(ambient) {
+      document.querySelector('#ambientMode').value=ambient.mode||'adaptive';
       setPalette(ambient.palette);
       document.querySelector('#ambientSpeed').value=ambient.speed;
       document.querySelector('#ambientScale').value=ambient.cloud_scale;
@@ -198,8 +223,14 @@
         document.querySelector('#modeText').textContent=status.mode;
         document.querySelector('#mode').value=status.mode;
         document.querySelector('#eventText').textContent=status.active_event?`${status.active_event.kind}: ${status.active_event.phase}`:'None';
+        document.querySelector('#houseMood').textContent=status.ambient.mood||status.ambient.time_mood||'Manual palette';
+        const context=status.context||{}, parts=[];
+        if(context.weather&&context.weather!=='unknown') parts.push(context.weather.replaceAll('-',' '));
+        if(context.temperature!==null&&context.temperature!==undefined) parts.push(`${context.temperature}${context.temperature_unit||'°F'}`);
+        if(context.humidity!==null&&context.humidity!==undefined) parts.push(`${context.humidity}% humidity`);
+        document.querySelector('#houseContext').textContent=parts.length?parts.join(' · '):'Home Assistant context has not arrived yet';
         if(!ambientInitialized) loadAmbient(status.ambient);
-        document.querySelector('#details').textContent=JSON.stringify({health_issues:status.health_issues,layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,deadline_misses:status.deadline_misses,frame_interval_p95_ms:status.frame_interval_p95_ms,frame_interval_max_ms:status.frame_interval_max_ms,send_duration_p95_ms:status.send_duration_p95_ms,receiver_status:status.receiver_status,temporary_ownership:status.output_lease_return_mode,output_validation:status.output_validation},null,2);
+        document.querySelector('#details').textContent=JSON.stringify({house_mood:status.ambient.mood,house_context:status.context,rain:status.rain_simulation,health_issues:status.health_issues,layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,deadline_misses:status.deadline_misses,frame_interval_p95_ms:status.frame_interval_p95_ms,receiver_status:status.receiver_status},null,2);
         draw(frame.frames);
       } catch(error) { document.querySelector('#health').textContent=error.message; document.querySelector('#health').className='bad'; }
     }
@@ -233,13 +264,32 @@
       const notice=document.querySelector('#ambientNotice');
       try {
         const palette=[...document.querySelectorAll('#ambientColors input')].map(input=>input.value);
-        const body={palette,speed:+document.querySelector('#ambientSpeed').value,cloud_scale:+document.querySelector('#ambientScale').value,saturation:+document.querySelector('#ambientSaturation').value,brightness:+document.querySelector('#ambientBrightness').value};
+        const body={mode:'manual',palette,speed:+document.querySelector('#ambientSpeed').value,cloud_scale:+document.querySelector('#ambientScale').value,saturation:+document.querySelector('#ambientSaturation').value,brightness:+document.querySelector('#ambientBrightness').value};
         const result=await api('/api/ambient',body); loadAmbient(result.ambient);
         document.querySelector('#ambientPreset').value='custom';
         notice.textContent='Nebula settings saved. Smooth transition in progress.'; notice.className='notice ok';
       } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
     };
-    init();
+    document.querySelector('#useAdaptive').onclick=async()=>{
+      const notice=document.querySelector('#ambientNotice');
+      try {
+        const result=await api('/api/ambient',{mode:'adaptive'}); loadAmbient(result.ambient);
+        notice.textContent='The house is choosing again. Time and weather will continuously shape the palette.'; notice.className='notice ok';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    };
+    document.querySelector('#ambientMode').onchange=()=>{
+      if(document.querySelector('#ambientMode').value==='adaptive') document.querySelector('#useAdaptive').click();
+      else document.querySelector('#ambientNotice').textContent='Choose a look or adjust the colors, then select “Use these manual colors.”';
+    };
+    document.querySelector('#copyAddress').onclick=async()=>{
+      await navigator.clipboard.writeText('http://raspberrypi.local:8090');
+      document.querySelector('#phoneNotice').textContent='Phone address copied.';
+    };
+    if(location.protocol==='file:') {
+      document.body.innerHTML=`<div class="source-warning"><h1>This is the project file, not the live house</h1><p>This copy cannot talk to the Pi or WLED. Open the live controller instead.</p><p><a href="http://raspberrypi.local:8090" style="color:var(--cyan);font-size:18px">Open Living House Lights</a></p><p style="color:var(--muted)">Bookmark that address on the laptop, or add it to your phone's Home Screen.</p></div>`;
+    } else {
+      init();
+    }
   </script>
 </body>
 </html>

@@ -11,8 +11,8 @@ flowchart LR
   HA -->|"semantic REST events"| Renderer["Ambient Renderer on Pi\nlayers · priorities · timelines · logs"]
   Renderer --> Simulator["Browser control center\nand lane simulator"]
   Renderer -->|"30 complete frames/sec over UDP realtime"| WLED["Stock WLED on ESP32\nhardware safety and fallback"]
-  WLED --> A["Physical output A\n139 LEDs"]
-  WLED --> B["Physical output B\n139 LEDs"]
+  WLED --> A["Active physical output A\n139 LEDs"]
+  WLED -.-> B["Planned/repaired output B\n139 LEDs"]
   Music["LedFx music mode"] -->|"exclusive realtime ownership"| WLED
 ```
 
@@ -24,8 +24,9 @@ or changing brightness. It is not a frame clock.
 
 The renderer uses two distinct paths:
 
-- The **control plane** carries meanings: `hour=10`, `rain=true`, or
-  `mode=music`. Home Assistant sends these small REST requests to the renderer.
+- The **control plane** carries meanings: `hour=10`, current weather and
+  temperature, or `mode=music`. Home Assistant sends these small REST requests
+  to the renderer.
 - The **frame plane** carries finished pictures. The renderer sends all 278 RGB
 pixels to WLED at a stable configured frame rate using WLED's DRGB UDP realtime
 protocol. The current office controller is deliberately set to 30 frames per
@@ -39,7 +40,8 @@ clock controls the complete timeline.
 
 - A **device** is one WLED controller.
 - A **lane** is one physical or conceptual strip within a device. The office
-  controller currently has two 139-LED lanes.
+  controller currently renders one active 139-LED lane; the second physical
+  output can be enabled as a matching lane after it is repaired.
 - A **layer** is persistent context that modifies the baseline, such as rain or
   focus mode.
 - An **event** is a bounded timeline such as the hourly clock or an urgent
@@ -52,9 +54,12 @@ memory and sends one unambiguous final color for every pixel.
 
 The initial stack is:
 
-1. **Ambient baseline** — configurable overlapping color clouds that drift,
-   warp, and continuously introduce the next palette colors without resetting.
-2. **Rain** — a cooled palette with narrow cyan drops moving downward.
+1. **Ambient baseline** — overlapping color clouds that drift, warp, and
+   continuously introduce the next palette colors without resetting. Adaptive
+   mode blends time-of-day palettes with weather, temperature, and wind;
+   manual mode holds an explicitly selected look.
+2. **Rain** — stateful droplets with randomized origin, tint, size, and speed.
+   Drops accelerate and nearby drops merge into heavier, faster rivulets.
 3. **Focus** — a persistent brightness reduction.
 4. **Hourly event** — an eight-second feathered wipe, cumulative bell tolls,
    five-second hold, and three-second crossfade back to the still-moving base.
@@ -113,10 +118,12 @@ three seconds. There is no WLED segment rebuild or preset restart in that fade.
 The service exposes:
 
 - `/health` for container health checks.
-- `/api/status` for mode, recent Pi frame rate, WLED receiver frame rate,
+- `/api/status` for mode, current house mood and context, rain-particle state,
+  recent Pi frame rate, WLED receiver frame rate,
   transport ownership, jitter, missed deadlines, active phase, layers, queue,
   frame counters, last result, and errors.
 - `/api/frame` for the exact simulated colors currently being sent.
+- `/api/context` for Home Assistant's weather and environmental updates.
 - an append-only JSON Lines event log in the renderer data volume.
 
 The browser control center uses the same API as Home Assistant. A test run is
