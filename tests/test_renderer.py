@@ -101,12 +101,26 @@ class RendererTests(unittest.TestCase):
     def test_every_semantic_signal_restores_exactly_to_base(self):
         device = self.device()
         base = [(90, 60, 30)] * 278
-        for name in ("reminder", "success", "warning", "celebration"):
+        for name in (
+            "welcome", "comfort", "curious", "goodbye",
+            "storm", "reminder", "success", "warning", "celebration",
+        ):
             event = SignalEvent(name, 0)
             active = render_signal(base, device, event, 1.0)
             restored = render_signal(base, device, event, float(event.duration))
             self.assertNotEqual(active, base, name)
             self.assertEqual(restored, base, name)
+
+    def test_emotional_animations_have_distinct_motion_languages(self):
+        device = self.device()
+        base = [(30, 40, 50)] * device.pixel_count
+        frames = {
+            name: render_signal(base, device, SignalEvent(name, 0), 2.2)
+            for name in ("welcome", "comfort", "curious", "goodbye")
+        }
+        for name, frame in frames.items():
+            self.assertNotEqual(frame, base, name)
+        self.assertEqual(len({tuple(frame) for frame in frames.values()}), 4)
 
     def test_reminder_is_concentrated_in_visible_top_third(self):
         device = self.device()
@@ -139,6 +153,23 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(field.status()["merged"], 1)
         self.assertGreater(field.drops["a"][0].velocity, 0.12)
 
+    def test_rain_supports_clinging_dribbles_and_fast_catchup_drops(self):
+        device = self.device()
+        field = RainField(seed=11)
+        field.drops["a"] = [Drop(0.2, 0.008, 0.4, 0.2, adhesion=0.95, previous_position=0.2)]
+        field.drops["b"] = [Drop(0.2, 0.72, 2.4, 0.8, adhesion=0.05, previous_position=0.2)]
+        field.last_at = 10.0
+        base = [(40, 50, 60)] * device.pixel_count
+        field.render(base, device, 10.1, device.lanes, intensity=0.0)
+        self.assertGreater(field.drops["b"][0].position - 0.2, 0.06)
+        self.assertLess(field.drops["a"][0].position - 0.2, 0.01)
+        self.assertGreater(field.status()["wet_pixels"], 0)
+        self.assertTrue(field.has_residue())
+        field.reset()
+        self.assertEqual(field.status()["active_drops"], 0)
+        self.assertEqual(field.status()["wet_pixels"], 0)
+        self.assertFalse(field.has_residue())
+
     def test_adaptive_mood_responds_to_weather_and_temperature(self):
         timestamp = 1_786_000_000.0
         mild = adaptive_ambient(timestamp, {"weather": "sunny", "temperature": 68, "temperature_unit": "°F"})
@@ -147,6 +178,44 @@ class RendererTests(unittest.TestCase):
         self.assertIn("sunny", mild["mood"])
         self.assertIn("pouring", storm["mood"])
         self.assertGreater(storm["speed"], mild["speed"])
+
+    def test_adaptive_mood_uses_house_timezone_and_sunset(self):
+        timestamp = 1_786_000_000.0
+        utc = adaptive_ambient(timestamp, {"weather": "sunny", "timezone": "UTC"})
+        pacific = adaptive_ambient(
+            timestamp,
+            {"weather": "sunny", "timezone": "America/Los_Angeles", "sun_elevation": -5},
+        )
+        self.assertNotEqual(utc["time_mood"], pacific["time_mood"])
+        self.assertIn("clear night", pacific["mood"])
+
+    def test_house_expression_amplifies_color_motion_and_breath(self):
+        timestamp = 1_786_000_000.0
+        context = {"weather": "sunny", "temperature": 82, "temperature_unit": "°F", "wind_speed": 12}
+        quiet = adaptive_ambient(timestamp, context, expression=0.5)
+        expressive = adaptive_ambient(timestamp, context, expression=1.5)
+        self.assertGreater(expressive["saturation"], quiet["saturation"])
+        self.assertGreater(expressive["speed"], quiet["speed"])
+        self.assertGreater(expressive["breath_depth"], quiet["breath_depth"])
+        self.assertGreater(expressive["life_activity"], quiet["life_activity"])
+        self.assertTrue(expressive["emotion"])
+        self.assertTrue(expressive["reason"])
+
+    def test_wind_and_organic_glimmers_change_the_living_base(self):
+        device = self.device()
+        palette = ((15, 30, 70), (40, 150, 135), (210, 120, 70))
+        still = render_base(device, 42.0, palette, 0.004, False, False)
+        windy = render_base(
+            device, 42.0, palette, 0.004, False, False,
+            wind_strength=0.9,
+        )
+        alive = render_base(
+            device, 42.0, palette, 0.004, False, False,
+            life_activity=1.0,
+            life_color=(255, 190, 80),
+        )
+        self.assertNotEqual(still, windy)
+        self.assertNotEqual(still, alive)
 
     def test_context_enables_rain_and_adaptive_mode_can_be_restored(self):
         with tempfile.TemporaryDirectory() as directory:

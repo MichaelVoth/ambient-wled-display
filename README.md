@@ -25,10 +25,12 @@ pixel frames, then sends those frames through WLED's realtime UDP interface.
 ## Features
 
 - Top-down 12-hour cumulative bell-toll display
-- Stateful animated rain with variable drops, acceleration, and merging rivulets
+- Stateful animated rain with clinging beads, fast heavy drops, merging rivulets, and evaporating trails
 - Adaptive living nebula shaped by time, weather, temperature, and wind
+- Named emotional states with quiet, balanced, and expressive personalities
+- Wind-responsive color currents and sparse organic glimmers between major events
 - Manual palettes and motion controls when you want a specific look
-- Calm reminder, success, warning, and work-celebration signals
+- Welcome, comfort, curiosity, goodbye, reminder, success, warning, storm, and celebration signals
 - Explicit multi-output lane configuration and synchronized rendering
 - Browser control center with an exact physical-lane simulator
 - Stable configurable UDP realtime output instead of HTTP animation choreography
@@ -62,7 +64,7 @@ flowchart LR
 
 See [the architecture guide](docs/architecture.md), [control-center guide](docs/control-center.md),
 [deployment and operations](docs/deployment.md), [performance audit](docs/performance-audit.md),
-and [visual language](docs/visual-language.md).
+[visual language](docs/visual-language.md), and [living-house roadmap](docs/living-house-roadmap.md).
 
 ## Quick start
 

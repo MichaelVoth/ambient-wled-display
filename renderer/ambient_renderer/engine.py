@@ -52,6 +52,7 @@ class RendererEngine:
             "cloud_scale": config.cloud_scale,
             "saturation": config.saturation,
             "brightness": config.ambient_brightness,
+            "expression": 1.0,
         })
         try:
             persisted = json.loads(self.settings_path.read_text(encoding="utf-8"))
@@ -72,6 +73,9 @@ class RendererEngine:
             "humidity": None,
             "cloud_coverage": None,
             "wind_speed": None,
+            "sun_elevation": None,
+            "presence": "unknown",
+            "timezone": "UTC",
             "updated_at": None,
         }
         try:
@@ -167,9 +171,6 @@ class RendererEngine:
         with self.lock:
             self.layers[name] = bool(enabled)
             self.layer_targets[name] = normalized_targets
-            if name == "rain" and not enabled:
-                for field in self.rain_fields.values():
-                    field.reset()
         self._record(
             "layer_changed",
             layer=name,
@@ -203,11 +204,7 @@ class RendererEngine:
             raining = weather in {
                 "rainy", "pouring", "lightning-rainy", "snowy-rainy", "hail"
             }
-            was_raining = self.layers["rain"]
             self.layers["rain"] = raining
-            if was_raining and not raining:
-                for field in self.rain_fields.values():
-                    field.reset()
             if self.ambient_target["mode"] == "adaptive":
                 self.ambient_from = current_ambient
                 self.ambient_changed_at = now
@@ -378,14 +375,20 @@ class RendererEngine:
                 cloud_scale=ambient["cloud_scale"],
                 saturation=ambient["saturation"],
                 ambient_brightness=ambient["brightness"],
+                breath_rate=ambient.get("breath_rate", 0.21),
+                breath_depth=ambient.get("breath_depth", 0.06),
+                wind_strength=ambient.get("wind_strength", 0.0),
+                life_activity=ambient.get("life_activity", 0.0),
+                life_color=ambient.get("life_color", (86, 220, 205)),
             )
-            if layers["rain"] and rain_lanes:
+            rain_field = self.rain_fields[device.id]
+            if rain_lanes and (layers["rain"] or rain_field.has_residue()):
                 frame = self.rain_fields[device.id].render(
                     frame,
                     device,
                     now,
                     rain_lanes,
-                    self._rain_intensity(context),
+                    self._rain_intensity(context) if layers["rain"] else 0.0,
                 )
             if isinstance(event, HourEvent):
                 target_lanes = self._target_lanes(device, event.targets)
@@ -554,7 +557,10 @@ class RendererEngine:
         changes: dict[str, Any],
         base: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        allowed = {"mode", "palette", "speed", "cloud_scale", "saturation", "brightness", "preset"}
+        allowed = {
+            "mode", "palette", "speed", "cloud_scale", "saturation",
+            "brightness", "expression", "preset",
+        }
         unknown = set(changes) - allowed
         if unknown:
             raise ValueError("unknown ambient settings: " + ", ".join(sorted(unknown)))
@@ -583,6 +589,7 @@ class RendererEngine:
             "cloud_scale": (0.3, 3.0),
             "saturation": (0.0, 2.0),
             "brightness": (0.05, 1.0),
+            "expression": (0.5, 1.5),
         }
         for name, (low, high) in ranges.items():
             if name in changes:
@@ -597,7 +604,14 @@ class RendererEngine:
 
     def _ambient_at(self, now: float) -> dict[str, Any]:
         second = (
-            {**adaptive_ambient(time.time(), self.context), "mode": "adaptive"}
+            {
+                **adaptive_ambient(
+                    time.time(),
+                    self.context,
+                    float(self.ambient_target.get("expression", 1.0)),
+                ),
+                "mode": "adaptive",
+            }
             if self.ambient_target["mode"] == "adaptive"
             else dict(self.ambient_target)
         )
@@ -623,10 +637,13 @@ class RendererEngine:
             "palette": palette,
             **{
                 name: float(first[name]) + (float(second[name]) - float(first[name])) * progress
-                for name in ("speed", "cloud_scale", "saturation", "brightness")
+                for name in ("speed", "cloud_scale", "saturation", "brightness", "expression")
             },
         }
-        for name in ("mood", "time_mood"):
+        for name in (
+            "mood", "time_mood", "emotion", "reason", "breath_rate",
+            "breath_depth", "wind_strength", "life_activity", "life_color",
+        ):
             if name in second:
                 blended[name] = second[name]
         return blended
@@ -640,18 +657,29 @@ class RendererEngine:
             "cloud_scale": round(float(ambient["cloud_scale"]), 3),
             "saturation": round(float(ambient["saturation"]), 3),
             "brightness": round(float(ambient["brightness"]), 3),
+            "expression": round(float(ambient.get("expression", 1.0)), 2),
         }
-        for name in ("mood", "time_mood"):
+        for name in ("mood", "time_mood", "emotion", "reason"):
             if name in ambient:
                 result[name] = ambient[name]
+        result["wind_strength"] = round(float(ambient.get("wind_strength", 0.0)), 3)
+        result["life_activity"] = round(float(ambient.get("life_activity", 0.0)), 3)
         return result
 
     def _persist_ambient(self, ambient: dict[str, Any]) -> None:
         try:
             self.settings_path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.settings_path.with_suffix(self.settings_path.suffix + ".tmp")
+            payload = self._ambient_json(ambient)
+            payload = {
+                name: payload[name]
+                for name in (
+                    "mode", "palette", "speed", "cloud_scale",
+                    "saturation", "brightness", "expression",
+                )
+            }
             temporary.write_text(
-                json.dumps(self._ambient_json(ambient), indent=2) + "\n",
+                json.dumps(payload, indent=2) + "\n",
                 encoding="utf-8",
             )
             temporary.replace(self.settings_path)
@@ -665,7 +693,7 @@ class RendererEngine:
     ) -> dict[str, Any]:
         allowed = {
             "weather", "temperature", "temperature_unit", "humidity",
-            "cloud_coverage", "wind_speed", "updated_at",
+            "cloud_coverage", "wind_speed", "sun_elevation", "presence", "timezone", "updated_at",
         }
         unknown = set(changes) - allowed
         if unknown:
@@ -675,11 +703,16 @@ class RendererEngine:
             result["weather"] = str(changes["weather"] or "unknown").strip().lower()
         if "temperature_unit" in changes:
             result["temperature_unit"] = str(changes["temperature_unit"] or "°F")[:8]
+        if "presence" in changes:
+            result["presence"] = str(changes["presence"] or "unknown").strip().lower()[:32]
+        if "timezone" in changes:
+            result["timezone"] = str(changes["timezone"] or "UTC").strip()[:64]
         ranges = {
             "temperature": (-100.0, 180.0),
             "humidity": (0.0, 100.0),
             "cloud_coverage": (0.0, 100.0),
             "wind_speed": (0.0, 250.0),
+            "sun_elevation": (-90.0, 90.0),
         }
         for name, (low, high) in ranges.items():
             if name in changes:

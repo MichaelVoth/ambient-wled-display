@@ -57,9 +57,13 @@ The initial stack is:
 1. **Ambient baseline** — overlapping color clouds that drift, warp, and
    continuously introduce the next palette colors without resetting. Adaptive
    mode blends time-of-day palettes with weather, temperature, and wind;
-   manual mode holds an explicitly selected look.
-2. **Rain** — stateful droplets with randomized origin, tint, size, and speed.
-   Drops accelerate and nearby drops merge into heavier, faster rivulets.
+   manual mode holds an explicitly selected look. Wind adds visible gusts to
+   the spatial field, while sparse independently timed glimmers give calm
+   conditions subtle life between semantic events.
+2. **Rain** — stateful droplets with randomized origin, tint, adhesion, size,
+   and speed. Small beads cling and stutter; heavy drops accelerate, catch
+   nearby water, and merge into faster rivulets. A decaying wetness field leaves
+   trails that evaporate after rain stops.
 3. **Focus** — a persistent brightness reduction.
 4. **Hourly event** — an eight-second feathered wipe, cumulative bell tolls,
    five-second hold, and three-second crossfade back to the still-moving base.
@@ -68,6 +72,11 @@ The initial stack is:
 
 Named semantic events sit between the hourly clock and urgent alerts:
 
+- welcome — warm rising light and glints near the visible top;
+- comfort — two warm fronts meet and settle into a slow shared pulse;
+- curious — independent cyan and magenta points investigate the lane;
+- goodbye — a cool descending veil with a fading warm memory;
+- storm — irregular cool-white lightning clusters;
 - reminder — amber beacon in the visible top third;
 - success — green upward completion wave;
 - celebration — multicolor launches and expanding one-dimensional bursts;
@@ -77,7 +86,11 @@ Adding a layer does not require changing WLED presets or segment topology. A
 new layer implements a color transformation and declares its semantic meaning.
 The ambient palette, drift speed, cloud scale, saturation, and brightness are
 runtime settings. Changes crossfade and persist independently of the deployment
-configuration.
+configuration. Adaptive settings also publish a named emotion, a plain-language
+reason, and a user-selected expression level that scales saturation, motion,
+and the baseline breathing amplitude. Home Assistant supplies the IANA timezone
+and solar elevation so time-of-day moods follow the house rather than the
+renderer container's system clock.
 
 ## Priority and ownership
 

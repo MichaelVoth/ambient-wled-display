@@ -44,7 +44,10 @@ rest_command:
        "temperature_unit": {{ state_attr('weather.home', 'temperature_unit') | default('°F', true) | tojson }},
        "humidity": {{ state_attr('weather.home', 'humidity') | default(none, true) | tojson }},
        "cloud_coverage": {{ state_attr('weather.home', 'cloud_coverage') | default(none, true) | tojson }},
-       "wind_speed": {{ state_attr('weather.home', 'wind_speed') | default(none, true) | tojson }}}
+       "wind_speed": {{ state_attr('weather.home', 'wind_speed') | default(none, true) | tojson }},
+       "sun_elevation": {{ state_attr('sun.sun', 'elevation') | default(none, true) | tojson }},
+       "presence": {{ states('person.michael_voth') | tojson }},
+       "timezone": "America/Los_Angeles"}
 
   ambient_renderer_mode:
     url: "http://127.0.0.1:8090/api/mode"
@@ -137,11 +140,32 @@ automation:
         event: start
       - trigger: state
         entity_id: weather.home
+      - trigger: state
+        entity_id:
+          - sun.sun
+          - person.michael_voth
       - trigger: time_pattern
         minutes: "/10"
     actions:
       - delay: "00:00:05"
       - action: rest_command.ambient_renderer_context
+    mode: restart
+
+  - id: ambient_renderer_welcome_home
+    alias: Ambient Renderer Welcome Home
+    triggers:
+      - trigger: state
+        entity_id: person.michael_voth
+        to: home
+    actions:
+      - action: rest_command.ambient_renderer_mode
+        data:
+          mode: renderer
+      - delay: "00:00:01"
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: welcome
+          take_output: false
     mode: restart
 
   - id: ambient_renderer_hourly_clock
@@ -219,6 +243,19 @@ automation:
         data:
           layer: rain
           enabled: false
+    mode: restart
+
+  - id: ambient_renderer_lightning
+    alias: Ambient Renderer Lightning
+    triggers:
+      - trigger: state
+        entity_id: weather.home
+        to: lightning-rainy
+    actions:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: storm
+          take_output: true
     mode: restart
 
   - id: ambient_renderer_service_warning

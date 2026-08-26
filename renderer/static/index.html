@@ -15,18 +15,24 @@
     header { padding:22px 28px; border-bottom:1px solid var(--line); background:#0e131b; }
     h1 { margin:0 0 4px; font-size:22px; font-weight:650; }
     header p { margin:0; color:var(--muted); }
-    main { display:grid; grid-template-columns:minmax(300px,420px) 1fr; gap:20px; padding:20px; }
+    main { display:grid; grid-template-columns:minmax(250px,360px) minmax(500px,1fr); gap:20px; padding:20px; align-items:start; }
     section { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
     h2 { font-size:16px; margin:0 0 14px; }
     label { color:var(--muted); display:block; margin:13px 0 5px; }
     button,select,input { background:#202938; color:#fff; border:1px solid #3c4960; border-radius:8px; padding:9px 11px; }
     button { cursor:pointer; }
     button:hover { border-color:var(--cyan); }
+    button.active { border-color:#73dbe8; box-shadow:0 0 0 1px #73dbe8 inset; background:#173b45; }
     button.primary { background:#117787; border-color:#32b7c9; }
     button.reminder { border-color:#c88b2e; color:#ffd58a; }
     button.success { border-color:#2c9c61; color:#88efb5; }
     button.warning { border-color:#d86f27; color:#ffb176; }
     button.celebration { border-color:#ab77f5; color:#e0c8ff; background:#3a2755; }
+    button.welcome { border-color:#eaa552; color:#ffd49c; }
+    button.comfort { border-color:#d87972; color:#ffc0b4; }
+    button.curious { border-color:#6fbed3; color:#9feafa; }
+    button.goodbye { border-color:#7180bd; color:#b9c5ff; }
+    button.storm { border-color:#9ba9ec; color:#dbe0ff; background:#262d54; }
     button.urgent { border-color:#d64e4e; color:#ff9f9f; }
     .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     .status { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
@@ -40,6 +46,10 @@
     .notice { min-height:22px; margin-top:10px; color:var(--muted); }
     .mood { padding:12px; border-radius:10px; background:linear-gradient(120deg,#182d53,#275a64,#66406f); margin:12px 0; }
     .mood small { color:#d7e4f2; display:block; }
+    .mood strong { display:block; font-size:20px; text-transform:capitalize; }
+    .controls { grid-column:2; grid-row:1; }
+    .controls > section + section { margin-top:20px; }
+    .simulator { grid-column:1; grid-row:1; position:sticky; top:20px; max-height:calc(100vh - 40px); overflow:auto; }
     .source-warning { max-width:620px; margin:12vh auto; padding:28px; border:1px solid #b77a35; border-radius:16px; background:#17130f; }
     .control-grid { display:grid; grid-template-columns:1fr auto; gap:8px 12px; align-items:center; }
     .control-grid label { margin:6px 0; }
@@ -47,7 +57,13 @@
     .colors { display:flex; gap:8px; flex-wrap:wrap; }
     .colors input[type="color"] { width:48px; height:42px; padding:3px; cursor:pointer; }
     output { min-width:52px; color:#d8e5f5; text-align:right; }
-    @media (max-width:800px) { main { grid-template-columns:1fr; } }
+    details summary { cursor:pointer; color:#dbe7f7; font-weight:650; }
+    details[open] summary { margin-bottom:14px; }
+    @media (max-width:800px) {
+      main { grid-template-columns:1fr; }
+      .controls { grid-column:1; grid-row:1; }
+      .simulator { grid-column:1; grid-row:2; position:relative; top:auto; max-height:none; }
+    }
   </style>
 </head>
 <body>
@@ -56,9 +72,30 @@
     <p>Semantic layers in, complete LED frames out.</p>
   </header>
   <main>
-    <div>
+    <div class="controls">
       <section>
-        <h2>Renderer</h2>
+        <h2>Everyday control</h2>
+        <p style="color:var(--muted);margin-top:-6px">Tell the system what is happening. The renderer handles the technical ownership changes.</p>
+        <label>What should the lights do?</label>
+        <div class="row">
+          <button id="liveAutomatically" class="primary">Live automatically</button>
+          <button id="resumeAmbient">Resume ambient</button>
+          <button id="startMusic">Dance to music</button>
+          <button id="quietNow">Quiet / stop output</button>
+        </div>
+        <label>How should the house express itself?</label>
+        <div class="row">
+          <button data-everyday-signal="welcome" class="welcome">Welcome home</button>
+          <button data-everyday-signal="comfort" class="comfort">Comfort</button>
+          <button data-everyday-signal="curious" class="curious">Curious</button>
+          <button data-everyday-signal="goodbye" class="goodbye">Goodbye</button>
+        </div>
+        <div id="everydayNotice" class="notice">The house is currently following its environment.</div>
+        <div class="metric"><small>Right now</small><span id="everydayState">Connecting to the house…</span></div>
+      </section>
+      <section>
+        <details>
+        <summary>System and output ownership</summary>
         <div class="status">
           <div class="metric"><small>Health</small><span id="health">Connecting…</span></div>
           <div class="metric"><small>Pi frame rate</small><span id="fps">—</span></div>
@@ -77,11 +114,19 @@
           </select>
           <button id="setMode">Apply</button>
         </div>
+        </details>
       </section>
       <section style="margin-top:20px">
         <h2>Ambient nebula</h2>
         <p style="color:var(--muted);margin-top:-6px">The house can choose a living palette from time, weather, temperature, and wind—or you can take manual control.</p>
-        <div class="mood"><small>House mood</small><strong id="houseMood">Learning the room…</strong><div id="houseContext" style="color:#d7e4f2;margin-top:3px">Waiting for Home Assistant…</div></div>
+        <div class="mood">
+          <small>The house is feeling</small>
+          <strong id="houseEmotion">Awake</strong>
+          <div id="houseMood">Learning the room…</div>
+          <div id="houseReason" style="color:#d7e4f2;margin-top:3px">Listening to its surroundings…</div>
+          <div id="houseActivity" style="color:#d7e4f2;margin-top:3px">Breathing softly…</div>
+          <div id="houseContext" style="color:#b7c7d8;margin-top:3px">Waiting for Home Assistant…</div>
+        </div>
         <label for="ambientMode">Who chooses the palette?</label>
         <div class="row">
           <select id="ambientMode">
@@ -90,6 +135,12 @@
           </select>
           <button id="useAdaptive" class="primary">Use living house mood</button>
         </div>
+        <div class="control-grid" style="margin-top:12px">
+          <label for="ambientExpression">Emotional expression</label>
+          <div class="row"><input id="ambientExpression" type="range" min="0.5" max="1.5" step="0.1"><output id="ambientExpressionValue"></output></div>
+        </div>
+        <details id="manualStudio" style="margin-top:14px">
+        <summary>Manual palette studio</summary>
         <label for="ambientPreset">Color look</label>
         <div class="row">
           <select id="ambientPreset">
@@ -119,6 +170,19 @@
         </div>
         <div class="row" style="margin-top:14px"><button id="applyAmbient">Use these manual colors</button></div>
         <div id="ambientNotice" class="notice">Adaptive mode evolves continuously. Manual changes crossfade over three seconds.</div>
+        </details>
+      </section>
+      <section>
+        <h2>Automatic instincts</h2>
+        <p style="color:var(--muted);margin-top:-6px">These are already connected. They work without opening this page.</p>
+        <div class="status">
+          <div class="metric"><small>Time + sunlight</small>Dawn through night palettes</div>
+          <div class="metric"><small>Weather</small>Color, breath, rain, and lightning</div>
+          <div class="metric"><small>Presence</small>Warm welcome when you arrive</div>
+          <div class="metric"><small>Every hour</small>Sweep and bell-toll clock</div>
+          <div class="metric"><small>Work rhythm</small>Lunch reminders and celebration</div>
+          <div class="metric"><small>House health</small>Energy, Pi-hole, and build warnings</div>
+        </div>
       </section>
       <section style="margin-top:20px">
         <h2>Phone access</h2>
@@ -127,7 +191,7 @@
         <div id="phoneNotice" class="notice">No terminal command is needed; the Pi runs this control center.</div>
       </section>
       <section style="margin-top:20px">
-        <h2>Test information</h2>
+        <h2>Animations and information</h2>
         <label for="hour">Bell-toll hour</label>
         <div class="row">
           <input id="hour" type="number" min="0" max="23" value="10">
@@ -147,17 +211,25 @@
           <button data-signal="success" class="success">Success wave</button>
           <button data-signal="warning" class="warning">Warning pulse</button>
           <button data-signal="celebration" class="celebration">Work celebration</button>
+          <button data-signal="welcome" class="welcome">Welcome home</button>
+          <button data-signal="comfort" class="comfort">Comfort</button>
+          <button data-signal="curious" class="curious">Curious</button>
+          <button data-signal="goodbye" class="goodbye">Goodbye</button>
+          <button data-signal="storm" class="storm">Storm flash</button>
         </div>
         <label>Urgent signal</label>
         <div class="row"><button id="alert" class="urgent">Urgent red alert</button></div>
       </section>
       <section style="margin-top:20px">
-        <h2>Live state</h2>
+        <details>
+        <summary>Technical live state</summary>
         <pre id="details">Waiting for renderer…</pre>
+        </details>
       </section>
     </div>
-    <section>
-      <h2>Physical lane simulator</h2>
+    <section class="simulator">
+      <h2>House light window</h2>
+      <p style="color:var(--muted);margin-top:-6px">Pinned live view of the exact pixels being sent to the active physical lane.</p>
       <div id="devices"></div>
     </section>
   </main>
@@ -201,6 +273,8 @@
       document.querySelector('#ambientScaleValue').textContent=`${document.querySelector('#ambientScale').value}×`;
       document.querySelector('#ambientSaturationValue').textContent=`${document.querySelector('#ambientSaturation').value}×`;
       document.querySelector('#ambientBrightnessValue').textContent=`${Math.round(+document.querySelector('#ambientBrightness').value*100)}%`;
+      const expression=+document.querySelector('#ambientExpression').value;
+      document.querySelector('#ambientExpressionValue').textContent=expression<0.8?'Quiet':expression>1.2?'Expressive':'Balanced';
     }
     function loadAmbient(ambient) {
       document.querySelector('#ambientMode').value=ambient.mode||'adaptive';
@@ -209,6 +283,8 @@
       document.querySelector('#ambientScale').value=ambient.cloud_scale;
       document.querySelector('#ambientSaturation').value=ambient.saturation;
       document.querySelector('#ambientBrightness').value=ambient.brightness;
+      document.querySelector('#ambientExpression').value=ambient.expression||1;
+      document.querySelector('#manualStudio').open=ambient.mode==='manual';
       updateAmbientLabels(); ambientInitialized=true;
     }
     async function refresh() {
@@ -223,14 +299,25 @@
         document.querySelector('#modeText').textContent=status.mode;
         document.querySelector('#mode').value=status.mode;
         document.querySelector('#eventText').textContent=status.active_event?`${status.active_event.kind}: ${status.active_event.phase}`:'None';
+        document.querySelector('#liveAutomatically').classList.toggle('active',status.mode==='renderer'&&status.ambient.mode==='adaptive');
+        document.querySelector('#resumeAmbient').classList.toggle('active',status.mode==='renderer'&&status.ambient.mode!=='adaptive');
+        document.querySelector('#startMusic').classList.toggle('active',status.mode==='music');
+        document.querySelector('#quietNow').classList.toggle('active',status.mode==='off');
+        const modeLabel={renderer:'Ambient renderer',preview:'Simulator only',music:'Music owns the lights',off:'Output quiet'}[status.mode]||status.mode;
+        document.querySelector('#everydayState').textContent=status.active_event?`${modeLabel} · ${status.active_event.kind} (${status.active_event.phase})`:modeLabel;
+        for(const button of document.querySelectorAll('[data-layer]')) button.textContent=`${button.dataset.layer==='rain'?'Rain':'Focus'}: ${status.layers[button.dataset.layer]?'on':'off'}`;
+        document.querySelector('#houseEmotion').textContent=status.ambient.emotion||'Self-directed';
         document.querySelector('#houseMood').textContent=status.ambient.mood||status.ambient.time_mood||'Manual palette';
+        document.querySelector('#houseReason').textContent=status.ambient.reason||'A manual palette is guiding the room.';
+        const life=status.ambient.life_activity||0,wind=status.ambient.wind_strength||0;
+        document.querySelector('#houseActivity').textContent=`${life>0.4?'Awake glimmers':life>0.15?'Occasional glimmers':'Quiet breathing'} · ${wind>0.5?'strong gusts':wind>0.2?'moving breeze':'still air'}`;
         const context=status.context||{}, parts=[];
         if(context.weather&&context.weather!=='unknown') parts.push(context.weather.replaceAll('-',' '));
         if(context.temperature!==null&&context.temperature!==undefined) parts.push(`${context.temperature}${context.temperature_unit||'°F'}`);
         if(context.humidity!==null&&context.humidity!==undefined) parts.push(`${context.humidity}% humidity`);
         document.querySelector('#houseContext').textContent=parts.length?parts.join(' · '):'Home Assistant context has not arrived yet';
         if(!ambientInitialized) loadAmbient(status.ambient);
-        document.querySelector('#details').textContent=JSON.stringify({house_mood:status.ambient.mood,house_context:status.context,rain:status.rain_simulation,health_issues:status.health_issues,layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,deadline_misses:status.deadline_misses,frame_interval_p95_ms:status.frame_interval_p95_ms,receiver_status:status.receiver_status},null,2);
+        document.querySelector('#details').textContent=JSON.stringify({house_emotion:status.ambient.emotion,house_mood:status.ambient.mood,why:status.ambient.reason,house_context:status.context,rain:status.rain_simulation,health_issues:status.health_issues,layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,deadline_misses:status.deadline_misses,frame_interval_p95_ms:status.frame_interval_p95_ms,receiver_status:status.receiver_status},null,2);
         draw(frame.frames);
       } catch(error) { document.querySelector('#health').textContent=error.message; document.querySelector('#health').className='bad'; }
     }
@@ -249,6 +336,19 @@
       await refresh(); setInterval(refresh,200);
     }
     document.querySelector('#setMode').onclick=()=>action(()=>api('/api/mode',{mode:document.querySelector('#mode').value}),'Output mode updated.');
+    async function everyday(work, success) {
+      const notice=document.querySelector('#everydayNotice');
+      try { await work(); notice.textContent=success; notice.className='notice ok'; await refresh(); }
+      catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    }
+    document.querySelector('#liveAutomatically').onclick=()=>everyday(async()=>{
+      await api('/api/mode',{mode:'renderer'});
+      await api('/api/ambient',{mode:'adaptive',expression:+document.querySelector('#ambientExpression').value});
+    },'The house is choosing from time, weather, sunlight, and presence.');
+    document.querySelector('#resumeAmbient').onclick=()=>everyday(()=>api('/api/mode',{mode:'renderer'}),'Ambient lighting resumed.');
+    document.querySelector('#startMusic').onclick=()=>everyday(()=>api('/api/mode',{mode:'music'}),'Renderer released WLED to LedFx music mode.');
+    document.querySelector('#quietNow').onclick=()=>everyday(()=>api('/api/mode',{mode:'off'}),'Renderer output stopped.');
+    for(const button of document.querySelectorAll('[data-everyday-signal]')) button.onclick=()=>everyday(()=>api('/api/events/signal',{signal:button.dataset.everydaySignal,take_output:true}),`${button.textContent} animation started.`);
     document.querySelector('#previewHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:false}),'Preview started.');
     document.querySelector('#runHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:true}),'WLED preflight passed. Temporary output started.');
     document.querySelector('#cancel').onclick=()=>action(()=>api('/api/events/cancel',{}),'Event cancelled and temporary output released.');
@@ -256,6 +356,14 @@
     for(const button of document.querySelectorAll('[data-signal]')) button.onclick=()=>action(()=>api('/api/events/signal',{signal:button.dataset.signal,take_output:true}),`${button.textContent} started.`);
     for(const button of document.querySelectorAll('[data-layer]')) button.onclick=()=>action(()=>api(`/api/layers/${button.dataset.layer}`,{enabled:!status.layers[button.dataset.layer]}),`${button.dataset.layer} layer updated.`);
     for(const slider of document.querySelectorAll('.control-grid input')) slider.oninput=updateAmbientLabels;
+    document.querySelector('#ambientExpression').onchange=async()=>{
+      if(status?.ambient?.mode!=='adaptive') return;
+      const notice=document.querySelector('#ambientNotice');
+      try {
+        await api('/api/ambient',{mode:'adaptive',expression:+document.querySelector('#ambientExpression').value});
+        notice.textContent='Emotional expression updated.'; notice.className='notice ok';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    };
     document.querySelector('#loadPreset').onclick=()=>{
       const name=document.querySelector('#ambientPreset').value;
       if(name!=='custom') setPalette(config.ambient_presets[name]);
@@ -273,13 +381,14 @@
     document.querySelector('#useAdaptive').onclick=async()=>{
       const notice=document.querySelector('#ambientNotice');
       try {
-        const result=await api('/api/ambient',{mode:'adaptive'}); loadAmbient(result.ambient);
+        const result=await api('/api/ambient',{mode:'adaptive',expression:+document.querySelector('#ambientExpression').value}); loadAmbient(result.ambient);
         notice.textContent='The house is choosing again. Time and weather will continuously shape the palette.'; notice.className='notice ok';
       } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
     };
     document.querySelector('#ambientMode').onchange=()=>{
       if(document.querySelector('#ambientMode').value==='adaptive') document.querySelector('#useAdaptive').click();
       else document.querySelector('#ambientNotice').textContent='Choose a look or adjust the colors, then select “Use these manual colors.”';
+      if(document.querySelector('#ambientMode').value==='manual') document.querySelector('#manualStudio').open=true;
     };
     document.querySelector('#copyAddress').onclick=async()=>{
       await navigator.clipboard.writeText('http://raspberrypi.local:8090');

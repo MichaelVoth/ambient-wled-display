@@ -17,6 +17,11 @@ physical output is enabled.
 - **Music / LedFx owns WLED** stops renderer output and clears temporary events.
 - **Output stopped** is an administrative stopped state.
 
+The **Everyday control** card translates these technical modes into intent:
+Live automatically, Resume ambient, Dance to music, or Quiet. It also exposes
+the emotional animations without requiring knowledge of WLED ownership. Raw
+output selection, manual palettes, and live JSON are collapsed by default.
+
 ## Test controls
 
 Choose an hour from 0–23 and select **Run hour**. The 12-hour count is derived
@@ -36,7 +41,23 @@ In **House chooses automatically**, local time selects the broad emotional arc:
 dawn, morning, daylight, golden afternoon, evening, or night. Home Assistant
 then modifies it with weather, temperature, and wind. Rain also enables a
 stateful water layer: drops begin at irregular positions, fall at different
-speeds, accelerate, and merge into faster rivulets.
+speeds, accelerate, and merge into faster rivulets. Tiny beads can cling and
+stutter; heavy drops can fall quickly enough to catch smaller drops. Wet paths
+remain briefly after the rain stops and then evaporate.
+
+The mood card names the current emotional interpretation—such as radiant,
+contemplative, brooding, stormy, cozy, or dreaming—and explains which inputs
+caused it. **Emotional expression** changes the strength of that translation:
+Quiet is subtle, Balanced is the default, and Expressive uses stronger color,
+motion, and breathing without requiring a hand-picked palette.
+
+Between explicit events, wind bends the color field into visible gusts and the
+base may produce sparse, independently timed glimmers. These are intentionally
+subtle and yield to rain, the hourly clock, music, and alerts.
+
+On wider screens the exact physical-lane simulator is pinned in the left
+column. The wider right column contains the controls and can scroll
+independently beneath it.
 
 The control center also provides a **manual** mode with:
 
@@ -99,7 +120,8 @@ curl -X POST http://raspberrypi.local:8090/api/events/signal \
   -d '{"signal":"celebration","take_output":true}'
 ```
 
-Supported signals are `reminder`, `success`, `warning`, and `celebration`.
+Supported signals are `welcome`, `comfort`, `curious`, `goodbye`, `storm`,
+`reminder`, `success`, `warning`, and `celebration`.
 
 Ambient settings can also be changed through the API:
 

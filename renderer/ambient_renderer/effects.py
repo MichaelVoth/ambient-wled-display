@@ -88,6 +88,11 @@ class AlertEvent:
 
 
 SIGNAL_DEFAULTS = {
+    "welcome": (8.0, 58),
+    "comfort": (10.0, 52),
+    "curious": (7.0, 54),
+    "goodbye": (8.0, 57),
+    "storm": (6.0, 70),
     "reminder": (8.0, 55),
     "success": (5.0, 60),
     "celebration": (12.0, 65),
@@ -155,6 +160,11 @@ def render_base(
     cloud_scale: float = 1.0,
     saturation: float = 1.0,
     ambient_brightness: float = 1.0,
+    breath_rate: float = 0.21,
+    breath_depth: float = 0.06,
+    wind_strength: float = 0.0,
+    life_activity: float = 0.0,
+    life_color: RGB = (86, 220, 205),
 ) -> list[RGB]:
     frame = [BLACK] * device.pixel_count
     rain_lane_ids = None if rain_lanes is None else {lane.id for lane in rain_lanes}
@@ -172,10 +182,32 @@ def render_base(
                 + 0.052 * math.sin(vertical * math.tau * 2.7 - drift * math.tau * 0.41)
                 + 0.025 * math.sin(vertical * math.tau * 5.1 + drift * math.tau * 0.19)
             )
+            if wind_strength > 0.01:
+                gust = 0.45 + 0.55 * math.sin(now * 0.17 + lane_number * 1.3)
+                warp += (
+                    wind_strength
+                    * gust
+                    * 0.085
+                    * math.sin(vertical * math.tau * 3.8 - now * (0.55 + wind_strength * 1.8))
+                )
             color = palette_color(palette, spatial + drift + warp + lane_number * 0.03)
-            breath = 0.94 + 0.06 * math.sin(now * 0.21 + vertical * math.tau * 0.8)
+            breath = (
+                1.0
+                - breath_depth
+                + breath_depth * math.sin(now * breath_rate + vertical * math.tau * 0.8)
+                + 0.012 * math.sin(now * 0.037 + lane_number * 1.7)
+            )
             color = saturate(color, saturation)
             color = scale(color, breath * device.brightness * ambient_brightness)
+            if life_activity > 0.01:
+                cell = min(11, int(vertical * 12.0))
+                cell_start = cell / 12.0
+                seed = ((cell * 73 + lane_number * 41 + 19) % 101) / 101.0
+                center = cell_start + (0.15 + seed * 0.7) / 12.0
+                point = math.exp(-(((vertical - center) / 0.012) ** 2))
+                period = 3.7 + (cell * 17 % 23) / 5.0
+                pulse = max(0.0, math.sin(now * math.tau / period + seed * math.tau)) ** 5
+                color = mix(color, life_color, min(0.34, life_activity * point * pulse * 0.42))
             if rain and (rain_lane_ids is None or lane.id in rain_lane_ids):
                 # Cool the complete palette, then add narrow downward-moving
                 # cyan drops. The motion is deterministic and continuous, so
@@ -289,6 +321,56 @@ def render_signal(
                 breath = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(elapsed * math.tau / 2.2))
                 amount = envelope * region * (0.28 + 0.56 * breath)
                 output[absolute] = mix(underlying, (255, 166, 42), amount)
+
+            elif event.signal == "welcome":
+                # Warmth rises into the room, then glints near the visible top.
+                center = 1.08 - min(1.0, elapsed / 2.8) * 1.16
+                wave = math.exp(-(((vertical - center) / 0.09) ** 2))
+                top_glow = (1.0 - smoothstep(0.12, 0.48, vertical)) * smoothstep(1.0, 3.2, elapsed)
+                sparkle = 1.0 if ((absolute * 19 + int(elapsed * 9)) % 67) < 2 else 0.0
+                warmth = mix((255, 174, 72), (255, 104, 142), vertical * 0.45)
+                amount = envelope * min(0.92, wave * 0.82 + top_glow * 0.3 + sparkle * top_glow * 0.34)
+                output[absolute] = mix(underlying, warmth, amount)
+
+            elif event.signal == "comfort":
+                # Two soft fronts meet like an embrace and settle into a slow glow.
+                approach = smoothstep(0.0, 3.2, elapsed) * 0.5
+                first = math.exp(-(((vertical - approach) / 0.13) ** 2))
+                second = math.exp(-(((vertical - (1.0 - approach)) / 0.13) ** 2))
+                held = 0.22 * smoothstep(2.4, 4.0, elapsed)
+                pulse = 0.72 + 0.28 * math.sin(elapsed * math.tau / 3.4)
+                amount = envelope * min(0.8, (max(first, second) * 0.62 + held) * pulse)
+                output[absolute] = mix(underlying, (244, 126, 104), amount)
+
+            elif event.signal == "curious":
+                # Independent points investigate the lane without reading as an alarm.
+                first_center = 0.5 + 0.39 * math.sin(elapsed * 1.45)
+                second_center = 0.5 + 0.34 * math.sin(elapsed * 0.93 + 2.1)
+                first = math.exp(-(((vertical - first_center) / 0.045) ** 2))
+                second = math.exp(-(((vertical - second_center) / 0.065) ** 2))
+                cyan = mix(underlying, (60, 222, 229), envelope * first * 0.88)
+                output[absolute] = mix(cyan, (210, 78, 221), envelope * second * 0.72)
+
+            elif event.signal == "goodbye":
+                # A cool veil moves down, leaving a small warm memory at the top.
+                edge = min(1.12, elapsed / 4.5)
+                veil = 1.0 - smoothstep(edge - 0.12, edge + 0.03, vertical)
+                memory = (1.0 - smoothstep(0.04, 0.2, vertical)) * max(0.0, 1.0 - elapsed / 6.5)
+                cooled = mix(scale(underlying, 0.35), (34, 42, 105), 0.44)
+                output[absolute] = mix(underlying, cooled, envelope * veil * 0.82)
+                output[absolute] = mix(output[absolute], (243, 142, 78), envelope * memory * 0.3)
+
+            elif event.signal == "storm":
+                # Deterministic clusters imitate irregular lightning without
+                # relying on frame-rate-dependent randomness.
+                flashes = (0.32, 0.49, 1.72, 3.08, 3.24, 4.86)
+                flash = max(
+                    math.exp(-(((elapsed - moment) / (0.045 if index % 2 else 0.075)) ** 2))
+                    for index, moment in enumerate(flashes)
+                )
+                branch = 0.72 + 0.28 * math.sin(vertical * math.tau * 5.7 + elapsed * 17.0)
+                charged = mix(underlying, scale(underlying, 0.55), envelope * 0.18)
+                output[absolute] = mix(charged, (220, 228, 255), envelope * flash * branch)
 
             elif event.signal == "success":
                 # A green wave rises from bottom to top, leaving a soft glow.
