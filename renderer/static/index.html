@@ -34,6 +34,15 @@
     button.goodbye { border-color:#7180bd; color:#b9c5ff; }
     button.storm { border-color:#9ba9ec; color:#dbe0ff; background:#262d54; }
     button.urgent { border-color:#d64e4e; color:#ff9f9f; }
+    button.music { border-color:#ff3fd4; color:#fff; background:linear-gradient(120deg,#d11295,#6424db 52%,#087f9d); font-weight:700; }
+    .music-card { background:radial-gradient(circle at 85% 10%,#4c145b 0,transparent 38%),linear-gradient(135deg,#16152b,#111c2d); border-color:#6d397d; }
+    .music-meter { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:12px; }
+    .music-meter span { height:7px; border-radius:99px; background:#252b3d; overflow:hidden; }
+    .music-meter i { display:block; height:100%; width:0; transition:width 90ms linear; }
+    .music-meter span:nth-child(1) i { background:#ff431c; }
+    .music-meter span:nth-child(2) i { background:#ff2fe0; }
+    .music-meter span:nth-child(3) i { background:#35ff72; }
+    .music-meter span:nth-child(4) i { background:#ffbe18; }
     .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     .status { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
     .metric { background:#0d1219; border-radius:9px; padding:10px; }
@@ -93,6 +102,33 @@
         <div id="everydayNotice" class="notice">The house is currently following its environment.</div>
         <div class="metric"><small>Right now</small><span id="everydayState">Connecting to the house…</span></div>
       </section>
+      <section class="music-card">
+        <h2>Music lights</h2>
+        <p style="color:var(--muted);margin-top:-6px">Choose where you want to listen, then use one button. The laptop and Pi handle routing, capture, and the lights together.</p>
+        <div class="control-grid">
+          <label for="musicRoute">Play music through</label>
+          <select id="musicRoute"><option value="">Finding speakers…</option></select>
+          <label for="musicEffect">Light style</label>
+          <select id="musicEffect">
+            <option value="pulse">Pulse — bass waves and bright sparks</option>
+            <option value="prism">Prism — full-color flowing bands</option>
+            <option value="spectrum">Spectrum — lows, mids, and highs</option>
+            <option value="lava">Lava — swelling multicolor pools</option>
+            <option value="comets">Comets — beat-launched streaks</option>
+            <option value="aurora">Aurora — musical curtains and stars</option>
+          </select>
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button id="musicToggle" class="music">Start music lights</button>
+        </div>
+        <div class="music-meter" aria-label="Live audio response">
+          <span title="Bass"><i id="musicBass"></i></span>
+          <span title="Midrange"><i id="musicMid"></i></span>
+          <span title="Treble"><i id="musicTreble"></i></span>
+          <span title="Beat"><i id="musicBeat"></i></span>
+        </div>
+        <div id="musicNotice" class="notice">The laptop helper connects automatically when you sign in.</div>
+      </section>
       <section>
         <details>
         <summary>System and output ownership</summary>
@@ -109,7 +145,7 @@
           <select id="mode">
             <option value="renderer">Renderer → WLED</option>
             <option value="preview">Simulator only</option>
-            <option value="music">Music / LedFx owns WLED</option>
+            <option value="music">Legacy external music controller</option>
             <option value="off">Output stopped</option>
           </select>
           <button id="setMode">Apply</button>
@@ -234,7 +270,7 @@
     </section>
   </main>
   <script>
-    let config=null,status=null,ambientInitialized=false;
+    let config=null,status=null,ambientInitialized=false,musicSetup=null;
     async function api(path, body) {
       const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
       const response=await fetch(path,options); const data=await response.json();
@@ -301,9 +337,22 @@
         document.querySelector('#eventText').textContent=status.active_event?`${status.active_event.kind}: ${status.active_event.phase}`:'None';
         document.querySelector('#liveAutomatically').classList.toggle('active',status.mode==='renderer'&&status.ambient.mode==='adaptive');
         document.querySelector('#resumeAmbient').classList.toggle('active',status.mode==='renderer'&&status.ambient.mode!=='adaptive');
-        document.querySelector('#startMusic').classList.toggle('active',status.mode==='music');
+        const music=status.music||{};
+        document.querySelector('#startMusic').classList.toggle('active',!!music.enabled);
+        document.querySelector('#musicToggle').classList.toggle('active',!!music.enabled);
+        document.querySelector('#musicToggle').textContent=music.enabled?'Stop music lights':'Start music lights';
+        document.querySelector('#musicEffect').value=music.effect||'pulse';
+        document.querySelector('#musicBass').style.width=`${Math.round((music.features?.bass||0)*100)}%`;
+        document.querySelector('#musicMid').style.width=`${Math.round((music.features?.mid||0)*100)}%`;
+        document.querySelector('#musicTreble').style.width=`${Math.round((music.features?.treble||0)*100)}%`;
+        document.querySelector('#musicBeat').style.width=`${Math.round((music.features?.beat||0)*100)}%`;
+        const musicNotice=document.querySelector('#musicNotice');
+        if(music.enabled) {
+          musicNotice.textContent=music.receiving_audio?'Music lights are on and receiving live audio.':'Music lights are on; waiting for sound from the selected speaker route.';
+          musicNotice.className=music.receiving_audio?'notice ok':'notice';
+        }
         document.querySelector('#quietNow').classList.toggle('active',status.mode==='off');
-        const modeLabel={renderer:'Ambient renderer',preview:'Simulator only',music:'Music owns the lights',off:'Output quiet'}[status.mode]||status.mode;
+        const modeLabel=music.enabled?(music.receiving_audio?'Dancing to the music':'Music mode · waiting for audio'):{renderer:'Ambient renderer',preview:'Simulator only',music:'Legacy music controller',off:'Output quiet'}[status.mode]||status.mode;
         document.querySelector('#everydayState').textContent=status.active_event?`${modeLabel} · ${status.active_event.kind} (${status.active_event.phase})`:modeLabel;
         for(const button of document.querySelectorAll('[data-layer]')) button.textContent=`${button.dataset.layer==='rain'?'Rain':'Focus'}: ${status.layers[button.dataset.layer]?'on':'off'}`;
         document.querySelector('#houseEmotion').textContent=status.ambient.emotion||'Self-directed';
@@ -317,7 +366,7 @@
         if(context.humidity!==null&&context.humidity!==undefined) parts.push(`${context.humidity}% humidity`);
         document.querySelector('#houseContext').textContent=parts.length?parts.join(' · '):'Home Assistant context has not arrived yet';
         if(!ambientInitialized) loadAmbient(status.ambient);
-        document.querySelector('#details').textContent=JSON.stringify({house_emotion:status.ambient.emotion,house_mood:status.ambient.mood,why:status.ambient.reason,house_context:status.context,rain:status.rain_simulation,health_issues:status.health_issues,layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,deadline_misses:status.deadline_misses,frame_interval_p95_ms:status.frame_interval_p95_ms,receiver_status:status.receiver_status},null,2);
+        document.querySelector('#details').textContent=JSON.stringify({house_emotion:status.ambient.emotion,house_mood:status.ambient.mood,why:status.ambient.reason,house_context:status.context,music:status.music,rain:status.rain_simulation,health_issues:status.health_issues,layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,deadline_misses:status.deadline_misses,frame_interval_p95_ms:status.frame_interval_p95_ms,receiver_status:status.receiver_status},null,2);
         draw(frame.frames);
       } catch(error) { document.querySelector('#health').textContent=error.message; document.querySelector('#health').className='bad'; }
     }
@@ -328,6 +377,20 @@
     }
     async function init() {
       config=await api('/api/config'); buildDevices();
+      try {
+        musicSetup=await api('/api/music');
+        const route=document.querySelector('#musicRoute'); route.innerHTML='';
+        for(const item of musicSetup.companion?.routes||[]) {
+          const option=document.createElement('option'); option.value=item.id;
+          option.textContent=item.available?item.label:`${item.label} — unavailable`;
+          option.disabled=!item.available; route.appendChild(option);
+          if(item.selected&&item.available) route.value=item.id;
+        }
+        if(!route.options.length) {
+          const option=document.createElement('option'); option.value=''; option.textContent='Laptop helper is offline'; route.appendChild(option);
+        }
+        document.querySelector('#musicNotice').textContent=musicSetup.companion?.available?'Ready. Start playing music after turning this on.':musicSetup.companion?.error||'Laptop helper is offline.';
+      } catch(error) { document.querySelector('#musicNotice').textContent=error.message; document.querySelector('#musicNotice').className='notice bad'; }
       const preset=document.querySelector('#ambientPreset');
       for(const name of Object.keys(config.ambient_presets)) {
         const option=document.createElement('option'); option.value=name;
@@ -341,13 +404,33 @@
       try { await work(); notice.textContent=success; notice.className='notice ok'; await refresh(); }
       catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
     }
+    async function toggleMusic() {
+      const notice=document.querySelector('#musicNotice');
+      const enabled=!!status?.music?.enabled;
+      try {
+        if(enabled) {
+          await api('/api/music',{action:'stop',effect:document.querySelector('#musicEffect').value});
+          notice.textContent='Music lights stopped. The living house palette is back.';
+        } else {
+          const route=document.querySelector('#musicRoute').value;
+          if(!route) throw new Error('The laptop helper is offline or no speaker route is available.');
+          notice.textContent='Connecting the speaker, audio capture, and lights…'; notice.className='notice';
+          await api('/api/music',{action:'start',route,effect:document.querySelector('#musicEffect').value});
+          notice.textContent='Music lights are on. Press play in any music app.';
+        }
+        notice.className='notice ok'; await refresh();
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    }
     document.querySelector('#liveAutomatically').onclick=()=>everyday(async()=>{
+      if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect});
       await api('/api/mode',{mode:'renderer'});
       await api('/api/ambient',{mode:'adaptive',expression:+document.querySelector('#ambientExpression').value});
     },'The house is choosing from time, weather, sunlight, and presence.');
-    document.querySelector('#resumeAmbient').onclick=()=>everyday(()=>api('/api/mode',{mode:'renderer'}),'Ambient lighting resumed.');
-    document.querySelector('#startMusic').onclick=()=>everyday(()=>api('/api/mode',{mode:'music'}),'Renderer released WLED to LedFx music mode.');
-    document.querySelector('#quietNow').onclick=()=>everyday(()=>api('/api/mode',{mode:'off'}),'Renderer output stopped.');
+    document.querySelector('#resumeAmbient').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/mode',{mode:'renderer'}); },'Ambient lighting resumed.');
+    document.querySelector('#startMusic').onclick=toggleMusic;
+    document.querySelector('#musicToggle').onclick=toggleMusic;
+    document.querySelector('#musicEffect').onchange=async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'effect',effect:document.querySelector('#musicEffect').value}); };
+    document.querySelector('#quietNow').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/mode',{mode:'off'}); },'Renderer output stopped.');
     for(const button of document.querySelectorAll('[data-everyday-signal]')) button.onclick=()=>everyday(()=>api('/api/events/signal',{signal:button.dataset.everydaySignal,take_output:true}),`${button.textContent} animation started.`);
     document.querySelector('#previewHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:false}),'Preview started.');
     document.querySelector('#runHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:true}),'WLED preflight passed. Temporary output started.');

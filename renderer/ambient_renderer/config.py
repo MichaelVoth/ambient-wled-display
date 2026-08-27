@@ -43,6 +43,7 @@ class RendererConfig:
     cloud_scale: float = 1.0
     saturation: float = 1.0
     ambient_brightness: float = 1.0
+    music_companion_url: str = "http://Michaels-Laptop.local:8091"
 
 
 def _required(data: dict[str, Any], key: str, context: str) -> Any:
@@ -142,4 +143,7 @@ def load_config(path: str | Path) -> RendererConfig:
         cloud_scale=cloud_scale,
         saturation=saturation,
         ambient_brightness=ambient_brightness,
+        music_companion_url=str(
+            data.get("music_companion_url", "http://Michaels-Laptop.local:8091")
+        ).rstrip("/"),
     )

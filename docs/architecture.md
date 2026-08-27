@@ -13,7 +13,7 @@ flowchart LR
   Renderer -->|"30 complete frames/sec over UDP realtime"| WLED["Stock WLED on ESP32\nhardware safety and fallback"]
   WLED --> A["Active physical output A\n139 LEDs"]
   WLED -.-> B["Planned/repaired output B\n139 LEDs"]
-  Music["LedFx music mode"] -->|"exclusive realtime ownership"| WLED
+  Music["Mac music companion\nBlackHole + private analysis"] -->|"audio features only"| Renderer
 ```
 
 ## Control plane and frame plane
@@ -54,8 +54,8 @@ memory and sends one unambiguous final color for every pixel.
 
 The initial stack is:
 
-1. **Ambient baseline** — overlapping color clouds that drift, warp, and
-   continuously introduce the next palette colors without resetting. Adaptive
+1. **Ambient baseline** — six unequal lava-like color bodies that drift, grow,
+   merge, and continuously introduce the next palette colors without resetting. Adaptive
    mode blends time-of-day palettes with weather, temperature, and wind;
    manual mode holds an explicitly selected look. Wind adds visible gusts to
    the spatial field, while sparse independently timed glimmers give calm
@@ -98,10 +98,12 @@ The renderer is the sole normal frame owner. Event priorities are enforced in
 one process: urgent alerts replace the hourly clock; lower-priority events wait
 in a queue. Persistent layers remain part of the underlying base.
 
-Music is an explicit exclusive mode. When mode changes to `music`, the renderer
-stops sending realtime frames and cancels its temporary events. WLED's realtime
-timeout releases the renderer, allowing LedFx to take ownership. Returning to
-`renderer` resumes the ambient frame stream.
+Music is an integrated layer. A login helper on the Mac selects a named
+Multi-Output Device, uses BlackHole's copy for analysis, and sends only compact
+audio features to the Pi. The renderer turns those values into Pulse, Prism,
+Spectrum, Lava, Comets, or Aurora frames. It remains the sole WLED frame owner,
+so the hourly clock, alerts, ambient color, and music no longer compete. The
+older external `mode=music` remains only as a compatibility escape hatch.
 
 If the renderer container stops or the Pi becomes unavailable, realtime packets stop
 and stock WLED returns to its existing preset after its configured realtime

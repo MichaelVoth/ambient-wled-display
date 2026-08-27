@@ -141,11 +141,11 @@ class RainField:
             for absolute in range(lane.start, lane.start + lane.length):
                 vertical = lane_distance_from_top(lane, absolute)
                 cooling = 0.24 + 0.08 * min(1.5, intensity) if intensity > 0 else 0.0
-                color = mix(base[absolute], (10, 67, 132), cooling)
+                color = mix(base[absolute], (4, 54, 185), cooling)
                 wet_index = min(lane.length - 1, max(0, int(vertical * lane.length)))
                 wet = self.wetness.get(lane.id, [0.0] * lane.length)[wet_index]
                 if wet > 0.01:
-                    color = mix(color, (35, 125, 183), min(0.26, wet * 0.28))
+                    color = mix(color, (0, 149, 238), min(0.34, wet * 0.36))
                 for drop in drops:
                     distance = vertical - drop.position
                     head_width = 0.007 + 0.004 * math.sqrt(drop.volume)
@@ -156,8 +156,8 @@ class RainField:
                         trail = (1.0 + distance / trail_length) * 0.42
                     strength = min(0.92, head * 0.82 + trail)
                     if strength > 0.01:
-                        tint = mix((48, 148, 224), (91, 205, 224), drop.tint)
-                        color = mix(color, tint, strength)
+                        tint = mix((0, 132, 255), (42, 255, 220), drop.tint)
+                        color = mix(color, tint, min(1.0, strength * 1.18))
                 output[absolute] = color
         return output
 

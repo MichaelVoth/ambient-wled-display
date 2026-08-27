@@ -1,0 +1,513 @@
+#!/usr/bin/env python3
+"""Mac companion that routes system audio and feeds musical features to the Pi."""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import math
+import os
+import socket
+import struct
+import subprocess
+import threading
+import time
+import urllib.request
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+
+class MusicCompanion:
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config = config
+        self.lock = threading.RLock()
+        self.stop_event = threading.Event()
+        self.shutdown_event = threading.Event()
+        self.thread: threading.Thread | None = None
+        self.process: subprocess.Popen[bytes] | None = None
+        self.capture_socket: socket.socket | None = None
+        self.active_route: str | None = None
+        self.effect = "pulse"
+        self.last_error: str | None = None
+        self.last_frame_at = 0.0
+        self.frames_sent = 0
+
+    def start_registration(self) -> None:
+        threading.Thread(target=self._registration_loop, name="renderer-registration", daemon=True).start()
+
+    def _registration_loop(self) -> None:
+        while not self.shutdown_event.is_set():
+            try:
+                request = urllib.request.Request(
+                    self.config["renderer_url"].rstrip("/") + "/api/music/register",
+                    data=json.dumps({"port": int(self.config.get("port", 8091))}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=2.0) as response:
+                    response.read()
+            except OSError:
+                pass
+            self.shutdown_event.wait(30.0)
+
+    def _devices(self) -> list[dict[str, Any]]:
+        command = [self.config["audio_route_tool"], "list"]
+        result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=4)
+        devices = []
+        for line in result.stdout.splitlines():
+            identifier, selected, name = line.split("\t", 2)
+            devices.append({"id": int(identifier), "name": name, "isDefault": selected == "1"})
+        return devices
+
+    def status(self) -> dict[str, Any]:
+        try:
+            available = {device["name"]: device for device in self._devices()}
+            device_error = None
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            available = {}
+            device_error = str(exc)
+        routes = [
+            {
+                **route,
+                "available": route["device"] in available,
+                "selected": bool(available.get(route["device"], {}).get("isDefault")),
+            }
+            for route in self.config["routes"]
+        ]
+        with self.lock:
+            running = bool(self.thread and self.thread.is_alive())
+            return {
+                "available": device_error is None,
+                "running": running,
+                "route": self.active_route,
+                "effect": self.effect,
+                "receiving_audio": running and time.monotonic() - self.last_frame_at < 1.2,
+                "frames_sent": self.frames_sent,
+                "last_error": self.last_error or device_error,
+                "routes": routes,
+            }
+
+    def start(self, route_id: str, effect: str) -> dict[str, Any]:
+        route = next((item for item in self.config["routes"] if item["id"] == route_id), None)
+        if route is None:
+            raise ValueError("unknown speaker route")
+        if effect not in {"pulse", "prism", "spectrum", "lava", "comets", "aurora"}:
+            raise ValueError("unknown music effect")
+        subprocess.run(
+            [self.config["audio_route_tool"], "set", route["device"]],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=4,
+        )
+        self.stop()
+        with self.lock:
+            self.active_route = route_id
+            self.effect = effect
+            self.last_error = None
+            self.stop_event.clear()
+            self.thread = threading.Thread(target=self._analyze, name="music-analysis", daemon=True)
+            self.thread.start()
+        return self.status()
+
+    def stop(self) -> dict[str, Any]:
+        self.stop_event.set()
+        with self.lock:
+            process = self.process
+            thread = self.thread
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        with self.lock:
+            capture_socket = self.capture_socket
+        if capture_socket:
+            try:
+                capture_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            capture_socket.close()
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=2)
+        with self.lock:
+            self.process = None
+            self.capture_socket = None
+            self.thread = None
+            self.active_route = None
+        if self.config.get("capture_backend", "ledfx") == "ledfx":
+            try:
+                self._ledfx_request(
+                    "/api/virtuals/house-audio-capture/effects/delete",
+                    {"type": "energy"},
+                )
+            except OSError:
+                pass
+        return self.status()
+
+    def _post_features(self, features: dict[str, float]) -> bool:
+        request = urllib.request.Request(
+            self.config["renderer_url"].rstrip("/") + "/api/audio",
+            data=json.dumps(features).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=0.8) as response:
+                response.read()
+            with self.lock:
+                self.last_error = None
+            return True
+        except OSError:
+            # The Pi may be rebuilding, rebooting, or changing Wi-Fi. Audio
+            # analysis should survive that interruption and resume on its own.
+            with self.lock:
+                self.last_error = "Waiting for the house renderer to reconnect"
+            return False
+
+    def _analyze(self) -> None:
+        if self.config.get("capture_backend", "ledfx") == "ledfx":
+            self._analyze_ledfx()
+            return
+        self._analyze_ffmpeg()
+
+    def _analyze_ffmpeg(self) -> None:
+        sample_rate = 44100
+        block_size = 1470
+        command = [
+            self.config["ffmpeg"], "-hide_banner", "-loglevel", "error",
+            "-f", "avfoundation", "-i", f":{self.config['audio_input']}",
+            "-ac", "1", "-ar", str(sample_rate), "-f", "f32le", "pipe:1",
+        ]
+        smoothed = {"bass": 0.0, "mid": 0.0, "treble": 0.0, "energy": 0.0, "beat": 0.0}
+        bass_floor = 0.08
+        phase = 0.0
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            with self.lock:
+                self.process = process
+            assert process.stdout is not None
+            window = np.hanning(block_size)
+            frequencies = np.fft.rfftfreq(block_size, 1.0 / sample_rate)
+            masks = {
+                "bass": (frequencies >= 35) & (frequencies < 190),
+                "mid": (frequencies >= 190) & (frequencies < 2400),
+                "treble": (frequencies >= 2400) & (frequencies < 12000),
+            }
+            while not self.stop_event.is_set():
+                raw = process.stdout.read(block_size * 4)
+                if len(raw) != block_size * 4:
+                    break
+                samples = np.frombuffer(raw, dtype=np.float32)
+                rms = float(np.sqrt(np.mean(samples * samples)))
+                energy = min(1.0, math.log1p(rms * 35.0) / math.log(8.0))
+                spectrum = np.abs(np.fft.rfft(samples * window))
+                total = float(np.sum(spectrum)) + 1e-9
+                values = {
+                    name: min(1.0, energy * float(np.sum(spectrum[mask]) / total) * multiplier)
+                    for (name, mask), multiplier in zip(masks.items(), (5.0, 2.6, 4.2))
+                }
+                bass_floor = bass_floor * 0.96 + values["bass"] * 0.04
+                beat = 1.0 if energy > 0.08 and values["bass"] > max(0.11, bass_floor * 1.32) else 0.0
+                values.update({"energy": energy, "beat": beat})
+                for name, value in values.items():
+                    rate = 0.58 if value > smoothed[name] else 0.16
+                    smoothed[name] += (value - smoothed[name]) * rate
+                phase += 0.18 + smoothed["bass"] * 0.46 + smoothed["energy"] * 0.18
+                payload = {**smoothed, "phase": phase}
+                if self._post_features(payload):
+                    with self.lock:
+                        self.last_frame_at = time.monotonic()
+                        self.frames_sent += 1
+            if process.poll() not in {None, 0, -15} and not self.stop_event.is_set():
+                assert process.stderr is not None
+                raise RuntimeError(process.stderr.read().decode("utf-8", errors="replace").strip())
+        except Exception as exc:
+            with self.lock:
+                self.last_error = str(exc) or type(exc).__name__
+        finally:
+            with self.lock:
+                self.process = None
+
+    def _ledfx_request(
+        self,
+        path: str,
+        body: dict[str, Any] | None = None,
+        method: str | None = None,
+    ) -> dict[str, Any]:
+        payload = None if body is None else json.dumps(body).encode("utf-8")
+        request = urllib.request.Request(
+            self.config.get("ledfx_url", "http://127.0.0.1:8889").rstrip("/") + path,
+            data=payload,
+            headers={"Content-Type": "application/json"} if payload else {},
+            method=method or ("POST" if payload is not None else "GET"),
+        )
+        with urllib.request.urlopen(request, timeout=3.0) as response:
+            value = json.loads(response.read().decode("utf-8"))
+        result = value if isinstance(value, dict) else {}
+        if result.get("status") == "failed":
+            payload = result.get("payload", {})
+            raise RuntimeError(str(payload.get("reason", "audio engine request failed")))
+        return result
+
+    def _ensure_ledfx(self) -> None:
+        try:
+            self._ledfx_request("/api/info")
+        except OSError:
+            app = self.config.get("ledfx_app", "/Applications/LedFx-2.1.5.app")
+            config_dir = os.path.expanduser(self.config.get("ledfx_config_dir", "~/.ledfx"))
+            subprocess.run(
+                [
+                    "/usr/bin/open", "-n", "-g", app, "--args", "--no-tray", "--offline",
+                    "-c", config_dir, "-p", "8889",
+                ],
+                check=True,
+                timeout=5,
+            )
+            for _ in range(40):
+                try:
+                    self._ledfx_request("/api/info")
+                    break
+                except OSError:
+                    time.sleep(0.25)
+            else:
+                raise RuntimeError("the authorized audio engine did not start")
+
+        devices = self._ledfx_request("/api/audio/devices").get("devices", {})
+        match = self.config.get("audio_input", "BlackHole 2ch").lower()
+        audio_id = next((key for key, name in devices.items() if match in str(name).lower()), None)
+        if audio_id is None:
+            raise RuntimeError("BlackHole 2ch is not available to the audio engine")
+        self._ledfx_request("/api/audio/devices", {"audio_device": int(audio_id)}, method="PUT")
+
+        devices_state = self._ledfx_request("/api/devices").get("devices", {})
+        if "house-audio-capture" not in devices_state:
+            created = self._ledfx_request(
+                "/api/devices",
+                {"type": "dummy", "config": {"name": "House Audio Capture", "pixel_count": 60}},
+            )
+            if str(created.get("device", {}).get("id", "")) != "house-audio-capture":
+                raise RuntimeError("could not create the private audio-analysis channel")
+        self._ledfx_request(
+            "/api/virtuals/house-audio-capture/effects",
+            {"type": "energy", "config": {"brightness": 1.0, "sensitivity": 0.9}},
+        )
+
+    @staticmethod
+    def _read_exact(connection: socket.socket, count: int) -> bytes:
+        data = b""
+        while len(data) < count:
+            part = connection.recv(count - len(data))
+            if not part:
+                raise ConnectionError("audio graph connection closed")
+            data += part
+        return data
+
+    @staticmethod
+    def _send_websocket(connection: socket.socket, payload: bytes, opcode: int = 1) -> None:
+        mask = os.urandom(4)
+        length = len(payload)
+        header = bytes([0x80 | opcode])
+        if length < 126:
+            header += bytes([0x80 | length])
+        elif length <= 65535:
+            header += bytes([0x80 | 126]) + struct.pack("!H", length)
+        else:
+            header += bytes([0x80 | 127]) + struct.pack("!Q", length)
+        masked = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+        connection.sendall(header + mask + masked)
+
+    @classmethod
+    def _read_websocket_json(cls, connection: socket.socket) -> dict[str, Any]:
+        while True:
+            first, second = cls._read_exact(connection, 2)
+            opcode = first & 0x0F
+            length = second & 0x7F
+            if length == 126:
+                length = struct.unpack("!H", cls._read_exact(connection, 2))[0]
+            elif length == 127:
+                length = struct.unpack("!Q", cls._read_exact(connection, 8))[0]
+            mask = cls._read_exact(connection, 4) if second & 0x80 else b""
+            payload = cls._read_exact(connection, length)
+            if mask:
+                payload = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+            if opcode == 8:
+                raise ConnectionError("audio graph connection closed")
+            if opcode == 9:
+                cls._send_websocket(connection, payload, opcode=10)
+                continue
+            if opcode == 1:
+                return json.loads(payload.decode("utf-8"))
+
+    def _open_ledfx_graph(self) -> socket.socket:
+        port = int(self.config.get("ledfx_url", "http://127.0.0.1:8889").rsplit(":", 1)[-1])
+        connection = socket.create_connection(("127.0.0.1", port), timeout=4)
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        request = (
+            "GET /api/websocket HTTP/1.1\r\n"
+            f"Host: 127.0.0.1:{port}\r\n"
+            "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+        )
+        connection.sendall(request.encode("ascii"))
+        response = b""
+        while b"\r\n\r\n" not in response:
+            # Do not read past the HTTP header: LedFx often places its first
+            # WebSocket frame in the same packet and discarding those bytes
+            # would lose the client-id greeting, leaving us waiting forever.
+            response += self._read_exact(connection, 1)
+        if b" 101 " not in response.split(b"\r\n", 1)[0]:
+            raise ConnectionError("audio graph websocket upgrade failed")
+        connection.settimeout(4)
+        self._read_websocket_json(connection)
+        self._send_websocket(
+            connection,
+            json.dumps({
+                "id": 1,
+                "type": "subscribe_event",
+                "event_type": "graph_update",
+                "event_filter": {"graph_id": "melbank_2"},
+            }).encode("utf-8"),
+        )
+        return connection
+
+    def _analyze_ledfx(self) -> None:
+        smoothed = {"bass": 0.0, "mid": 0.0, "treble": 0.0, "energy": 0.0, "beat": 0.0}
+        bass_floor = 0.08
+        phase = 0.0
+        last_sent = 0.0
+        try:
+            self._ensure_ledfx()
+            connection = self._open_ledfx_graph()
+            with self.lock:
+                self.capture_socket = connection
+            while not self.stop_event.is_set():
+                message = self._read_websocket_json(connection)
+                if message.get("event_type") != "graph_update" or message.get("graph_id") != "melbank_2":
+                    continue
+                now = time.monotonic()
+                if now - last_sent < 1.0 / 30.0:
+                    continue
+                melbank = np.asarray(message.get("melbank", []), dtype=float)
+                frequencies = np.asarray(message.get("frequencies", []), dtype=float)
+                if not len(melbank) or len(melbank) != len(frequencies):
+                    continue
+
+                def band(low: float, high: float) -> float:
+                    values = melbank[(frequencies >= low) & (frequencies < high)]
+                    return min(1.0, float(np.quantile(values, 0.82)) if len(values) else 0.0)
+
+                values = {
+                    "bass": band(35, 190),
+                    "mid": band(190, 2400),
+                    "treble": band(2400, 15000),
+                    "energy": min(1.0, float(np.quantile(melbank, 0.78))),
+                }
+                bass_floor = bass_floor * 0.96 + values["bass"] * 0.04
+                values["beat"] = 1.0 if values["bass"] > max(0.12, bass_floor * 1.3) else 0.0
+                for name, value in values.items():
+                    rate = 0.62 if value > smoothed[name] else 0.2
+                    smoothed[name] += (value - smoothed[name]) * rate
+                phase += 0.18 + smoothed["bass"] * 0.46 + smoothed["energy"] * 0.18
+                if self._post_features({**smoothed, "phase": phase}):
+                    with self.lock:
+                        self.last_frame_at = now
+                        self.frames_sent += 1
+                last_sent = now
+        except Exception as exc:
+            if not self.stop_event.is_set():
+                with self.lock:
+                    self.last_error = str(exc) or type(exc).__name__
+        finally:
+            with self.lock:
+                self.capture_socket = None
+
+
+class Handler(BaseHTTPRequestHandler):
+    server: "Server"
+
+    def log_message(self, *_args: Any) -> None:
+        return
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self._cors()
+        self.end_headers()
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path == "/api/status":
+            self._json(self.server.companion.status())
+        elif self.path == "/health":
+            self._json({"ok": True})
+        else:
+            self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:  # noqa: N802
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
+            if self.path == "/api/start":
+                result = self.server.companion.start(str(body.get("route", "")), str(body.get("effect", "pulse")))
+            elif self.path == "/api/stop":
+                result = self.server.companion.stop()
+            else:
+                self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+                return
+            self._json(result)
+        except (ValueError, OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            detail = exc.stderr.strip() if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else str(exc)
+            self._json({"error": detail}, HTTPStatus.BAD_REQUEST)
+
+    def _cors(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+
+    def _json(self, value: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+        payload = json.dumps(value, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self._cors()
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], companion: MusicCompanion) -> None:
+        super().__init__(address, Handler)
+        self.companion = companion
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    args = parser.parse_args()
+    path = Path(args.config).resolve()
+    config = json.loads(path.read_text(encoding="utf-8"))
+    route_tool = Path(config.get("audio_route_tool", "./audio-route"))
+    if not route_tool.is_absolute():
+        config["audio_route_tool"] = str((path.parent / route_tool).resolve())
+    companion = MusicCompanion(config)
+    server = Server((str(config.get("bind", "0.0.0.0")), int(config.get("port", 8091))), companion)
+    companion.start_registration()
+    try:
+        server.serve_forever(0.5)
+    finally:
+        companion.shutdown_event.set()
+        companion.stop()
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

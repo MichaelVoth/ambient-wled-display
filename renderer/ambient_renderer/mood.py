@@ -10,13 +10,13 @@ from .color import RGB, clamp, mix, palette_color
 
 
 TIME_MOODS: tuple[tuple[float, str, tuple[RGB, ...]], ...] = (
-    (0.0, "deep night", ((7, 7, 30), (22, 25, 75), (24, 88, 112), (53, 38, 105), (105, 38, 104), (20, 55, 96), (12, 16, 48))),
-    (5.0, "dawn", ((15, 14, 55), (92, 44, 105), (190, 75, 105), (238, 135, 82), (238, 193, 104), (84, 149, 171), (43, 74, 137))),
-    (8.5, "morning", ((16, 30, 82), (24, 103, 153), (39, 175, 163), (116, 195, 104), (226, 192, 68), (226, 105, 72), (126, 65, 158))),
-    (12.0, "daylight", ((18, 38, 105), (27, 127, 184), (35, 190, 192), (56, 180, 116), (212, 199, 65), (230, 118, 68), (139, 67, 170))),
-    (16.5, "golden afternoon", ((29, 37, 99), (53, 109, 168), (49, 171, 154), (210, 173, 61), (235, 116, 64), (188, 66, 117), (91, 58, 151))),
-    (19.5, "evening", ((15, 20, 66), (58, 46, 133), (142, 53, 154), (215, 79, 112), (233, 139, 69), (43, 133, 144), (25, 54, 112))),
-    (23.0, "night", ((8, 10, 40), (25, 31, 91), (35, 85, 128), (38, 111, 114), (74, 47, 126), (126, 42, 116), (29, 29, 78))),
+    (0.0, "deep night", ((9, 5, 56), (25, 23, 142), (0, 126, 167), (89, 27, 181), (188, 18, 162), (15, 73, 142), (20, 8, 82))),
+    (5.0, "dawn", ((28, 8, 108), (126, 25, 164), (237, 31, 123), (255, 82, 32), (255, 170, 22), (20, 185, 187), (35, 61, 190))),
+    (8.5, "morning", ((14, 35, 166), (0, 137, 215), (0, 220, 173), (47, 226, 72), (246, 210, 17), (255, 77, 24), (184, 35, 213))),
+    (12.0, "daylight", ((15, 49, 188), (0, 153, 232), (0, 220, 220), (23, 219, 78), (239, 212, 13), (255, 86, 20), (199, 31, 215))),
+    (16.5, "golden afternoon", ((29, 28, 169), (29, 112, 223), (0, 205, 146), (236, 188, 13), (255, 77, 17), (232, 27, 112), (129, 27, 203))),
+    (19.5, "evening", ((20, 10, 127), (76, 29, 202), (184, 22, 218), (244, 28, 128), (255, 86, 19), (0, 177, 180), (18, 44, 174))),
+    (23.0, "night", ((10, 5, 75), (29, 24, 164), (0, 112, 176), (0, 157, 137), (94, 26, 180), (199, 17, 161), (36, 13, 121))),
 )
 
 
@@ -67,8 +67,8 @@ def adaptive_ambient(
     else:
         fahrenheit = None
 
-    saturation = 1.18
-    brightness = 0.88
+    saturation = 1.42
+    brightness = 0.96
     speed = 0.0035
     cloud_scale = 1.75
     wind_strength = 0.0
@@ -79,20 +79,20 @@ def adaptive_ambient(
     if weather in {"sunny", "clear", "clear-night"}:
         if weather == "clear-night":
             palette = tuple(mix(color, (52, 75, 139), 0.09 * expression) for color in palette)
-            brightness = 0.78
-            saturation = 1.16
+            brightness = 0.9
+            saturation = 1.4
             emotion = "dreaming"
             reasons.append("a clear night deepens the palette")
         else:
             palette = tuple(mix(color, (244, 178, 63), 0.07 * expression) for color in palette)
-            brightness = 0.94
-            saturation = 1.25
+            brightness = 1.0
+            saturation = 1.5
             emotion = "radiant"
             reasons.append("clear light warms the palette")
     elif weather in {"partlycloudy", "partly-cloudy", "cloudy", "overcast"}:
         palette = tuple(mix(color, (107, 119, 151), 0.10) for color in palette)
-        saturation = 1.05
-        brightness = 0.82
+        saturation = 1.28
+        brightness = 0.91
         cloud_scale = 2.15
         emotion = "contemplative"
         reasons.append("cloud cover softens the colors")
@@ -101,21 +101,21 @@ def adaptive_ambient(
         amount = (0.48 if weather in {"pouring", "lightning-rainy", "hail"} else 0.34) * expression
         palette = _sample_blend(palette, storm, amount)
         speed = 0.0048
-        saturation = 1.22
-        brightness = 0.78
+        saturation = 1.43
+        brightness = 0.9
         emotion = "stormy" if weather in {"pouring", "lightning-rainy", "hail"} else "brooding"
         reasons.append("rain cools and quickens the house")
     elif weather in {"snowy", "snow"}:
         snow = ((30, 48, 105), (80, 142, 190), (181, 217, 226), (132, 116, 195), (75, 133, 174), (214, 221, 228), (65, 77, 137))
         palette = _sample_blend(palette, snow, 0.52)
-        saturation = 0.92
-        brightness = 0.88
+        saturation = 1.12
+        brightness = 0.94
         emotion = "hushed"
         reasons.append("snow quiets the palette")
     elif weather in {"fog", "foggy"}:
         palette = tuple(mix(color, (135, 125, 160), 0.24) for color in palette)
         speed = 0.0022
-        saturation = 0.82
+        saturation = 1.08
         cloud_scale = 2.5
         emotion = "watchful"
         reasons.append("fog slows and mutes the motion")

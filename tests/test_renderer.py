@@ -22,6 +22,7 @@ from ambient_renderer.effects import (  # noqa: E402
 )
 from ambient_renderer.engine import RendererEngine  # noqa: E402
 from ambient_renderer.mood import adaptive_ambient  # noqa: E402
+from ambient_renderer.music import render_music  # noqa: E402
 from ambient_renderer.output import DRGB_PROTOCOL, encode_drgb  # noqa: E402
 from ambient_renderer.rain import Drop, RainField  # noqa: E402
 
@@ -216,6 +217,45 @@ class RendererTests(unittest.TestCase):
         )
         self.assertNotEqual(still, windy)
         self.assertNotEqual(still, alive)
+
+    def test_music_effects_are_distinct_and_vivid(self):
+        device = self.device()
+        base = [(28, 31, 44)] * device.pixel_count
+        features = {"bass": 0.9, "mid": 0.72, "treble": 0.8, "energy": 0.74, "beat": 1.0, "phase": 3.2}
+        frames = {
+            effect: render_music(base, device, 12.0, features, effect)
+            for effect in ("pulse", "prism", "spectrum", "lava", "comets", "aurora")
+        }
+        self.assertEqual(len({tuple(frame) for frame in frames.values()}), 6)
+        for frame in frames.values():
+            self.assertGreater(max(max(pixel) for pixel in frame), 220)
+            self.assertNotEqual(frame, base)
+
+    def test_integrated_music_keeps_renderer_ownership_and_reports_audio(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = RendererConfig(
+                fps=30,
+                output_enabled=False,
+                palette=("#000000", "#ffffff"),
+                palette_speed=0.01,
+                devices=(self.device(),),
+                log_path=str(pathlib.Path(directory) / "events.jsonl"),
+            )
+            engine = RendererEngine(config)
+            engine._validate_outputs = lambda: None
+            try:
+                engine.set_music(True, "prism")
+                engine.update_audio({"bass": 0.8, "mid": 0.5, "treble": 0.4, "energy": 0.7, "beat": 1, "phase": 2})
+                status = engine.status()
+                self.assertEqual(status["mode"], "renderer")
+                self.assertTrue(status["music"]["enabled"])
+                self.assertTrue(status["music"]["receiving_audio"])
+                self.assertEqual(status["music"]["effect"], "prism")
+                self.assertTrue(engine.trigger_signal("success")["accepted"])
+                engine.set_music(False)
+                self.assertFalse(engine.status()["music"]["enabled"])
+            finally:
+                engine.stop()
 
     def test_context_enables_rain_and_adaptive_mode_can_be_restored(self):
         with tempfile.TemporaryDirectory() as directory:

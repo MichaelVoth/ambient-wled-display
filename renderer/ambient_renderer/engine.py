@@ -25,18 +25,20 @@ from .effects import (
 )
 from .output import create_output
 from .mood import adaptive_ambient
+from .music import MUSIC_EFFECTS, render_music
 from .rain import RainField
 
 
 LOGGER = logging.getLogger(__name__)
 
 AMBIENT_PRESETS = {
-    "living": ["#10143f", "#176b9e", "#25b88a", "#d6c54a", "#e8734f", "#bc4f9d", "#5d45ad"],
-    "ocean": ["#06142e", "#075f73", "#42a6a1", "#bac7bd", "#315f8c"],
-    "aurora": ["#07112f", "#164e8a", "#16a085", "#65d98b", "#7656b7"],
-    "cosmic": ["#09051d", "#30206f", "#c43aa2", "#2179a8", "#35d0c5"],
-    "sunset": ["#11183b", "#63305d", "#c64f68", "#f49a52", "#f3c87a"],
-    "ember": ["#17080d", "#5c1720", "#b33a2e", "#e87838", "#f2bd65"],
+    "living": ["#16067a", "#006ee8", "#00dca6", "#36e848", "#f5cf11", "#ff4d15", "#e71caf", "#6d1fe1"],
+    "ocean": ["#03106b", "#006ccf", "#00cbd8", "#00e38f", "#2153c9"],
+    "aurora": ["#13077d", "#0757dc", "#00d5b0", "#35f064", "#bb24e8"],
+    "cosmic": ["#110052", "#4620d4", "#e616cf", "#008bea", "#00e8c2"],
+    "sunset": ["#18107e", "#a018b5", "#f01979", "#ff5318", "#ffb817"],
+    "ember": ["#3f0012", "#a40723", "#f22918", "#ff7911", "#ffc11a"],
+    "electric garden": ["#10106f", "#7030df", "#ec19cb", "#ff3c17", "#ff9d00", "#35ef31", "#00cfe8"],
 }
 
 
@@ -117,6 +119,18 @@ class RendererEngine:
         self.output_validation: dict[str, dict[str, Any]] = {}
         self.receiver_status: dict[str, dict[str, Any]] = {}
         self.last_phase_key: tuple[int, str] | None = None
+        self.music_companion_url = config.music_companion_url
+        self.music_enabled = False
+        self.music_effect = "pulse"
+        self.audio_features = {
+            "bass": 0.0,
+            "mid": 0.0,
+            "treble": 0.0,
+            "energy": 0.0,
+            "beat": 0.0,
+            "phase": 0.0,
+        }
+        self.audio_updated_at = 0.0
 
     def start(self) -> None:
         if self.thread and self.thread.is_alive():
@@ -160,9 +174,70 @@ class RendererEngine:
             self.mode = mode
             self.return_mode_after_events = None
             if mode in {"music", "off"}:
+                self.music_enabled = False
                 self.active_event = None
                 self.event_queue.clear()
         self._record("mode_changed", mode=mode)
+
+    def set_music(self, enabled: bool, effect: str | None = None) -> dict[str, Any]:
+        if effect is not None and effect not in MUSIC_EFFECTS:
+            raise ValueError(f"music effect must be one of: {', '.join(sorted(MUSIC_EFFECTS))}")
+        if enabled:
+            self._validate_outputs()
+        with self.lock:
+            if effect is not None:
+                self.music_effect = effect
+            self.music_enabled = bool(enabled)
+            if enabled:
+                self.mode = "renderer"
+                self.return_mode_after_events = None
+            else:
+                self.audio_features["beat"] = 0.0
+        self._record(
+            "music_changed",
+            enabled=self.music_enabled,
+            effect=self.music_effect,
+        )
+        return self.music_status()
+
+    def update_audio(self, changes: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"bass", "mid", "treble", "energy", "beat", "phase"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown audio features: " + ", ".join(sorted(unknown)))
+        with self.lock:
+            for name in allowed:
+                if name not in changes:
+                    continue
+                value = float(changes[name])
+                if name == "phase":
+                    self.audio_features[name] = value
+                else:
+                    self.audio_features[name] = max(0.0, min(1.0, value))
+            self.audio_updated_at = time.monotonic()
+        return self.music_status()
+
+    def music_status(self) -> dict[str, Any]:
+        now = time.monotonic()
+        with self.lock:
+            age = now - self.audio_updated_at if self.audio_updated_at else None
+            return {
+                "enabled": self.music_enabled,
+                "effect": self.music_effect,
+                "receiving_audio": bool(
+                    self.music_enabled and age is not None and age < 1.2
+                ),
+                "audio_age_ms": None if age is None else round(age * 1000),
+                "features": dict(self.audio_features),
+            }
+
+    def register_music_companion(self, host: str, port: int) -> str:
+        if not 1 <= port <= 65535:
+            raise ValueError("music companion port is invalid")
+        with self.lock:
+            self.music_companion_url = f"http://{host}:{port}"
+        self._record("music_companion_registered", url=self.music_companion_url)
+        return self.music_companion_url
 
     def set_layer(self, name: str, enabled: bool, targets: list[str] | tuple[str, ...] | None = None) -> None:
         if name not in self.layers:
@@ -344,6 +419,10 @@ class RendererEngine:
             mode = self.mode
             ambient = self._ambient_at(now)
             context = dict(self.context)
+            music_enabled = self.music_enabled
+            music_effect = self.music_effect
+            audio_features = dict(self.audio_features)
+            audio_age = now - self.audio_updated_at if self.audio_updated_at else float("inf")
 
         if event:
             phase = event.phase(now)[0]
@@ -390,6 +469,14 @@ class RendererEngine:
                     rain_lanes,
                     self._rain_intensity(context) if layers["rain"] else 0.0,
                 )
+            if music_enabled:
+                if audio_age > 1.2:
+                    faded = dict(audio_features)
+                    fade = max(0.0, 1.0 - (audio_age - 1.2) / 1.5)
+                    for name in ("bass", "mid", "treble", "energy", "beat"):
+                        faded[name] *= fade
+                    audio_features = faded
+                frame = render_music(frame, device, now, audio_features, music_effect)
             if isinstance(event, HourEvent):
                 target_lanes = self._target_lanes(device, event.targets)
                 if target_lanes:
@@ -517,6 +604,7 @@ class RendererEngine:
                 "output_validation": dict(self.output_validation),
                 "receiver_status": dict(self.receiver_status),
                 "layers": dict(self.layers),
+                "music": self.music_status(),
                 "ambient": {
                     **self._ambient_json(active_ambient),
                     "transitioning": now - self.ambient_changed_at < self.ambient_transition,

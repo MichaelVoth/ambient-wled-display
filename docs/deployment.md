@@ -25,8 +25,9 @@ No terminal command is required. Docker starts the renderer after a Pi reboot.
    a real test. In continuous mode both use the same central timeline.
 4. Use **Cancel** at any point to return to the renderer's ambient base.
 
-Use the **Ambient nebula** panel to choose a named color look or edit all five
-palette colors directly. The slow Ocean look is the current office default.
+Use the **Ambient nebula** panel to choose a named color look or edit all seven
+palette colors directly. Unequal lava-like bodies create both very short and
+whole-wall color regions.
 Changes are written to the renderer's persistent data volume and do not require
 a container restart.
 
@@ -57,11 +58,11 @@ ownership.
 ## Recovery and rollback
 
 - Select **Simulator only** or **Output stopped** to stop renderer frames.
-- Select **Music / LedFx owns WLED** before music-reactive playback.
-- The included LedFx launcher makes that mode change automatically on start and
-  returns the renderer to its configured idle mode when LedFx stops.
-  `AMBIENT_RENDERER_URL` identifies the Pi control center and
-  `AMBIENT_RENDERER_IDLE_MODE=renderer` restores continuous ownership.
+- Use the **Music lights** card for normal playback. Speaker routing, private
+  audio analysis, and renderer activation happen behind one Start/Stop button.
+- The Mac companion starts automatically at login and re-registers its current
+  network address with the Pi. A brief Pi or Wi-Fi interruption no longer ends
+  the analysis session.
 - If the renderer container stops, WLED returns to its current preset after the
   realtime timeout.
 - Ambient color controls are stored in `/data/ambient-settings.json` inside the

@@ -8,7 +8,9 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from .color import parse_hex
 from .engine import RendererEngine
@@ -49,9 +51,17 @@ class RendererHandler(BaseHTTPRequestHandler):
                 "devices": status["devices"],
                 "fps": status["fps_target"],
                 "ambient_presets": AMBIENT_PRESETS,
+                "music_companion_url": self.server.engine.music_companion_url,
             })
         elif path == "/api/ambient":
             self._json(self.server.engine.status()["ambient"])
+        elif path == "/api/music":
+            music = self.server.engine.music_status()
+            try:
+                companion = self._companion("/api/status")
+            except ValueError as exc:
+                companion = {"available": False, "error": str(exc), "routes": []}
+            self._json({**music, "companion": companion})
         elif path == "/api/context":
             self._json(self.server.engine.status()["context"])
         elif path == "/health":
@@ -115,6 +125,38 @@ class RendererHandler(BaseHTTPRequestHandler):
             elif path == "/api/mode":
                 self.server.engine.set_mode(str(body.get("mode", "preview")))
                 self._json({"ok": True, "mode": self.server.engine.status()["mode"]})
+            elif path == "/api/music/register":
+                url = self.server.engine.register_music_companion(
+                    self.client_address[0], int(body.get("port", 8091))
+                )
+                self._json({"ok": True, "url": url})
+            elif path == "/api/audio":
+                self._json({"ok": True, "music": self.server.engine.update_audio(body)})
+            elif path == "/api/music":
+                action = str(body.get("action", ""))
+                effect = str(body.get("effect", "pulse"))
+                if action == "start":
+                    route = str(body.get("route", "")).strip()
+                    if not route:
+                        raise ValueError("choose a speaker route")
+                    companion = self._companion(
+                        "/api/start",
+                        {"route": route, "effect": effect},
+                    )
+                    music = self.server.engine.set_music(True, effect)
+                elif action == "stop":
+                    self.server.engine.set_music(False, effect)
+                    try:
+                        companion = self._companion("/api/stop", {})
+                    except ValueError as exc:
+                        companion = {"available": False, "error": str(exc)}
+                    music = self.server.engine.music_status()
+                elif action == "effect":
+                    music = self.server.engine.set_music(True, effect)
+                    companion = {"available": True}
+                else:
+                    raise ValueError("music action must be start, stop, or effect")
+                self._json({"ok": True, "music": music, "companion": companion})
             elif path == "/api/ambient":
                 self._json({"ok": True, "ambient": self.server.engine.set_ambient(body)})
             elif path == "/api/context":
@@ -123,6 +165,35 @@ class RendererHandler(BaseHTTPRequestHandler):
                 self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _companion(self, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        base = self.server.engine.music_companion_url
+        if not base:
+            raise ValueError("music companion is not configured")
+        payload = None if body is None else json.dumps(body).encode("utf-8")
+        request = Request(
+            base + path,
+            data=payload,
+            headers={"Content-Type": "application/json"} if payload is not None else {},
+            method="POST" if payload is not None else "GET",
+        )
+        try:
+            with urlopen(request, timeout=4.0) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            message = exc.read().decode("utf-8", errors="replace")
+            try:
+                detail = json.loads(message).get("error", message)
+            except json.JSONDecodeError:
+                detail = message
+            raise ValueError(f"laptop music helper: {detail}") from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            raise ValueError(
+                "the laptop music helper is offline; wake the laptop or reinstall its login service"
+            ) from exc
+        if not isinstance(result, dict):
+            raise ValueError("laptop music helper returned an invalid response")
+        return result
 
     def _body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))

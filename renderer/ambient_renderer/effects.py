@@ -148,6 +148,49 @@ def lane_distance_from_top(lane: LaneConfig, absolute_index: int) -> float:
     return distance / max(1, lane.length - 1)
 
 
+def lava_color(
+    palette: tuple[RGB, ...],
+    vertical: float,
+    now: float,
+    speed: float,
+    scale_factor: float,
+    lane_number: int,
+    wind_strength: float,
+) -> RGB:
+    """Return a multi-scale flowing color field with unequal organic regions."""
+    scale_factor = max(0.3, scale_factor)
+    drift = now * speed
+    # One body can wash across almost the entire strip while smaller ones bud,
+    # merge, and travel independently instead of forming repeating bands.
+    radii = (0.88, 0.46, 0.27, 0.15, 0.075, 0.035)
+    weighted = [0.0, 0.0, 0.0]
+    total = 0.0
+    for blob, radius in enumerate(radii):
+        seed = ((blob * 47 + lane_number * 29 + 13) % 97) / 97.0
+        direction = -1.0 if blob % 2 else 1.0
+        travel = drift * direction * (0.12 + blob * 0.047)
+        wobble = math.sin(now * speed * (0.7 + blob * 0.21) + seed * math.tau) * (0.04 + blob * 0.007)
+        center = (seed + travel + wobble + wind_strength * now * 0.004) % 1.0
+        distance = min(abs(vertical - center), 1.0 - abs(vertical - center))
+        changing_radius = radius * scale_factor * (
+            0.82 + 0.24 * math.sin(now * speed * (0.31 + blob * 0.09) + seed * 11.0)
+        )
+        weight = math.exp(-0.5 * (distance / max(0.012, changing_radius)) ** 2)
+        color_position = seed + drift * (0.035 + blob * 0.017) + blob * 0.137
+        blob_color = palette_color(palette, color_position)
+        weight *= 1.18 if blob < 2 else 0.82
+        for channel in range(3):
+            weighted[channel] += blob_color[channel] * weight
+        total += weight
+
+    background = palette_color(palette, drift * 0.028 + lane_number * 0.07)
+    background_weight = 0.12
+    return tuple(
+        round((weighted[channel] + background[channel] * background_weight) / (total + background_weight))
+        for channel in range(3)
+    )  # type: ignore[return-value]
+
+
 def render_base(
     device: DeviceConfig,
     now: float,
@@ -170,27 +213,26 @@ def render_base(
     rain_lane_ids = None if rain_lanes is None else {lane.id for lane in rain_lanes}
     focus_lane_ids = None if focus_lanes is None else {lane.id for lane in focus_lanes}
     for lane_number, lane in enumerate(device.lanes):
+        # Organic bodies are spatially smooth, so evaluate their expensive
+        # multi-blob field every three LEDs and interpolate between control
+        # points. This preserves small pockets while leaving frame time for
+        # music, rain, and semantic layers on a Raspberry Pi.
+        sample_count = max(2, math.ceil(lane.length / 3) + 1)
+        lava_samples = [
+            lava_color(
+                palette, sample / (sample_count - 1), now, palette_speed,
+                cloud_scale, lane_number, wind_strength,
+            )
+            for sample in range(sample_count)
+        ]
         for absolute in range(lane.start, lane.start + lane.length):
             vertical = lane_distance_from_top(lane, absolute)
-            # Three broad, slowly interfering waves create a cloudlike field.
-            # The palette itself continuously rolls, so new colors enter at the
-            # edges while existing clouds stretch and dissolve in place.
-            drift = now * palette_speed
-            spatial = vertical * (0.72 / max(0.3, cloud_scale))
-            warp = (
-                0.095 * math.sin(vertical * math.tau * 1.3 + drift * math.tau * 0.73)
-                + 0.052 * math.sin(vertical * math.tau * 2.7 - drift * math.tau * 0.41)
-                + 0.025 * math.sin(vertical * math.tau * 5.1 + drift * math.tau * 0.19)
+            sample_position = vertical * (sample_count - 1)
+            sample_index = min(sample_count - 2, int(sample_position))
+            color = mix(
+                lava_samples[sample_index], lava_samples[sample_index + 1],
+                sample_position - sample_index,
             )
-            if wind_strength > 0.01:
-                gust = 0.45 + 0.55 * math.sin(now * 0.17 + lane_number * 1.3)
-                warp += (
-                    wind_strength
-                    * gust
-                    * 0.085
-                    * math.sin(vertical * math.tau * 3.8 - now * (0.55 + wind_strength * 1.8))
-                )
-            color = palette_color(palette, spatial + drift + warp + lane_number * 0.03)
             breath = (
                 1.0
                 - breath_depth
@@ -320,7 +362,7 @@ def render_signal(
                 region = 1.0 - smoothstep(0.18, 0.36, vertical)
                 breath = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(elapsed * math.tau / 2.2))
                 amount = envelope * region * (0.28 + 0.56 * breath)
-                output[absolute] = mix(underlying, (255, 166, 42), amount)
+                output[absolute] = mix(underlying, (255, 142, 0), min(1.0, amount * 1.12))
 
             elif event.signal == "welcome":
                 # Warmth rises into the room, then glints near the visible top.
@@ -328,8 +370,8 @@ def render_signal(
                 wave = math.exp(-(((vertical - center) / 0.09) ** 2))
                 top_glow = (1.0 - smoothstep(0.12, 0.48, vertical)) * smoothstep(1.0, 3.2, elapsed)
                 sparkle = 1.0 if ((absolute * 19 + int(elapsed * 9)) % 67) < 2 else 0.0
-                warmth = mix((255, 174, 72), (255, 104, 142), vertical * 0.45)
-                amount = envelope * min(0.92, wave * 0.82 + top_glow * 0.3 + sparkle * top_glow * 0.34)
+                warmth = mix((255, 112, 10), (255, 31, 158), vertical * 0.48)
+                amount = envelope * min(0.98, wave * 0.9 + top_glow * 0.4 + sparkle * top_glow * 0.4)
                 output[absolute] = mix(underlying, warmth, amount)
 
             elif event.signal == "comfort":
@@ -339,8 +381,8 @@ def render_signal(
                 second = math.exp(-(((vertical - (1.0 - approach)) / 0.13) ** 2))
                 held = 0.22 * smoothstep(2.4, 4.0, elapsed)
                 pulse = 0.72 + 0.28 * math.sin(elapsed * math.tau / 3.4)
-                amount = envelope * min(0.8, (max(first, second) * 0.62 + held) * pulse)
-                output[absolute] = mix(underlying, (244, 126, 104), amount)
+                amount = envelope * min(0.94, (max(first, second) * 0.74 + held) * pulse)
+                output[absolute] = mix(underlying, (255, 64, 43), amount)
 
             elif event.signal == "curious":
                 # Independent points investigate the lane without reading as an alarm.
@@ -348,17 +390,17 @@ def render_signal(
                 second_center = 0.5 + 0.34 * math.sin(elapsed * 0.93 + 2.1)
                 first = math.exp(-(((vertical - first_center) / 0.045) ** 2))
                 second = math.exp(-(((vertical - second_center) / 0.065) ** 2))
-                cyan = mix(underlying, (60, 222, 229), envelope * first * 0.88)
-                output[absolute] = mix(cyan, (210, 78, 221), envelope * second * 0.72)
+                cyan = mix(underlying, (0, 241, 224), envelope * first * 0.96)
+                output[absolute] = mix(cyan, (237, 20, 255), envelope * second * 0.9)
 
             elif event.signal == "goodbye":
                 # A cool veil moves down, leaving a small warm memory at the top.
                 edge = min(1.12, elapsed / 4.5)
                 veil = 1.0 - smoothstep(edge - 0.12, edge + 0.03, vertical)
                 memory = (1.0 - smoothstep(0.04, 0.2, vertical)) * max(0.0, 1.0 - elapsed / 6.5)
-                cooled = mix(scale(underlying, 0.35), (34, 42, 105), 0.44)
+                cooled = mix(scale(underlying, 0.32), (35, 18, 169), 0.62)
                 output[absolute] = mix(underlying, cooled, envelope * veil * 0.82)
-                output[absolute] = mix(output[absolute], (243, 142, 78), envelope * memory * 0.3)
+                output[absolute] = mix(output[absolute], (255, 92, 12), envelope * memory * 0.48)
 
             elif event.signal == "storm":
                 # Deterministic clusters imitate irregular lightning without
@@ -379,8 +421,8 @@ def render_signal(
                 glow = 0.16 * smoothstep(0.0, 1.4, elapsed)
                 output[absolute] = mix(
                     underlying,
-                    (52, 235, 125),
-                    envelope * min(0.92, glow + 0.76 * wave),
+                    (28, 255, 70),
+                    envelope * min(1.0, glow + 0.88 * wave),
                 )
 
             elif event.signal == "warning":
@@ -389,18 +431,18 @@ def render_signal(
                 output[absolute] = mix(
                     underlying,
                     (255, 116, 24),
-                    envelope * (0.2 + 0.68 * pulse),
+                    envelope * (0.28 + 0.72 * pulse),
                 )
 
             elif event.signal == "celebration":
                 # Repeating launches and expanding colored rings make a
                 # readable one-dimensional firework without random flicker.
                 colors = (
-                    (255, 72, 112),
-                    (255, 190, 48),
-                    (78, 220, 255),
-                    (158, 102, 255),
-                    (74, 240, 150),
+                    (255, 28, 91),
+                    (255, 174, 0),
+                    (0, 220, 255),
+                    (131, 42, 255),
+                    (27, 255, 91),
                 )
                 cycle_length = 1.35
                 cycle_index = int(elapsed / cycle_length)

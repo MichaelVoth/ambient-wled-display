@@ -14,7 +14,7 @@ physical output is enabled.
 
 - **Renderer → WLED** continuously sends the composed ambient display to WLED.
 - **Simulator only** keeps rendering the preview but sends no physical frames.
-- **Music / LedFx owns WLED** stops renderer output and clears temporary events.
+- **Legacy external music controller** is retained only as a recovery option.
 - **Output stopped** is an administrative stopped state.
 
 The **Everyday control** card translates these technical modes into intent:
@@ -33,9 +33,12 @@ continuously rendered base.
 
 ## Ambient nebula controls
 
-The normal background is a continuous nebula rather than a looping WLED
-preset. Broad color clouds overlap, stretch, and dissolve while the palette
-slowly enters from the edges. There is no frame where the animation resets.
+The normal background is a continuous lava-lamp nebula rather than a looping
+WLED preset. Six unequal color bodies range from a tiny pocket to wider than a
+whole lane. They drift in different directions, slowly change size, overlap,
+merge, and introduce new palette colors without an animation reset. This is why
+one part of the wall may be almost entirely one color while small contrasting
+islands appear elsewhere.
 
 In **House chooses automatically**, local time selects the broad emotional arc:
 dawn, morning, daylight, golden afternoon, evening, or night. Home Assistant
@@ -96,6 +99,14 @@ Use **Share → Add to Home Screen** to install the control center as a home-scr
 app. The Pi starts it automatically; no laptop terminal command is required.
 If a page opened from a `file:///` address says it is the project file, follow
 its live-controller link instead. The project file cannot control the house.
+
+## Music lights
+
+Choose **Play music through**, choose a light style, and select **Start music
+lights**. That single action selects the named macOS Multi-Output Device,
+starts private audio analysis, and adds a reactive layer inside the renderer.
+The live meters confirm that bass, mids, treble, and beats are arriving. Hourly
+and urgent semantic events can still be composed by the same central owner.
 
 Events and layers can be scoped to configured device or lane IDs. Omitting
 `targets` means every configured lane:

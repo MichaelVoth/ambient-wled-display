@@ -8,7 +8,7 @@ This project combines:
 - WLED presets and its JSON API
 - Home Assistant semantic automations
 - A central configurable-FPS layered renderer and browser simulator
-- LedFx and BlackHole for music-reactive lighting on macOS
+- A one-button macOS music companion using BlackHole for loopback audio
 - Optional energy, weather, presence, calendar, network, and CI signals
 
 The central idea is to treat position, color, motion, and time as a compact
@@ -26,7 +26,7 @@ pixel frames, then sends those frames through WLED's realtime UDP interface.
 
 - Top-down 12-hour cumulative bell-toll display
 - Stateful animated rain with clinging beads, fast heavy drops, merging rivulets, and evaporating trails
-- Adaptive living nebula shaped by time, weather, temperature, and wind
+- Multi-scale lava-lamp nebula shaped by time, weather, temperature, and wind
 - Named emotional states with quiet, balanced, and expressive personalities
 - Wind-responsive color currents and sparse organic glimmers between major events
 - Manual palettes and motion controls when you want a specific look
@@ -37,11 +37,11 @@ pixel frames, then sends those frames through WLED's realtime UDP interface.
 - Independent sender and WLED receiver FPS, jitter, and deadline monitoring
 - Persistent semantic layers and prioritized temporary events
 - Multi-device configuration for future rooms and stairs
-- Explicit music mode so LedFx and the renderer never fight for ownership
+- Integrated music layers that keep the central renderer in sole ownership
 - WLED preset fallback when the renderer or network is unavailable
 - Weather, presence, workday, Pi-hole, energy, and GitHub Actions examples
 - WLED preset provisioning through the JSON API
-- LedFx launcher and scene selector that finds BlackHole by name
+- AirPods, laptop-speaker, and office-speaker routing from the same control panel
 - No custom WLED firmware required
 
 ## Architecture
@@ -58,8 +58,8 @@ flowchart LR
   Music["Music application"] --> Multi["macOS multi-output device"]
   Multi --> Speakers["Speakers or headphones"]
   Multi --> BlackHole["BlackHole 2ch"]
-  BlackHole --> LedFx["LedFx"]
-  LedFx --> Realtime["WLED realtime UDP"]
+  BlackHole --> Analyzer["Hidden authorized audio analyzer"]
+  Analyzer -->|"bass · mids · treble · beat"| Controller
 ```
 
 See [the architecture guide](docs/architecture.md), [control-center guide](docs/control-center.md),
@@ -136,19 +136,18 @@ python3 homeassistant/wled_hour_marker.py \
 
 ### 4. Configure music-reactive lighting on macOS
 
-Install BlackHole 2ch and LedFx, then create a macOS Multi-Output Device that
-contains both the listening device and BlackHole. Make the listening device
-primary and enable drift correction for BlackHole.
-
-Configure the environment and start LedFx:
+Install BlackHole 2ch and create a macOS Multi-Output Device for each useful
+speaker combination. The included companion uses LedFx only as an invisible,
+macOS-authorized analyzer; it never sends frames to WLED and its web interface
+is not part of normal operation. Install the login helper once:
 
 ```bash
-set -a
-source .env
-set +a
-./ledfx/ledfx-control.sh start
-./ledfx/ledfx-control.sh energy
+bash music-companion/install-macos.sh
 ```
+
+After that, open the Pi control center, select a speaker and one of the six
+light styles, then select **Start music lights**. No terminal or LedFx page is
+needed. The helper starts automatically whenever the Mac signs in.
 
 AirPlay devices such as HomePod may not remain attached to a macOS
 Multi-Output Device. Bluetooth, built-in, USB, and wired outputs are generally
