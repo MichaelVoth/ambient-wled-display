@@ -230,6 +230,9 @@ class RendererTests(unittest.TestCase):
         for frame in frames.values():
             self.assertGreater(max(max(pixel) for pixel in frame), 220)
             self.assertNotEqual(frame, base)
+        high_contrast = render_music(base, device, 12.0, features, "lava", background_level=0.28)
+        blended = render_music(base, device, 12.0, features, "lava", background_level=0.7)
+        self.assertNotEqual(high_contrast, blended)
 
     def test_integrated_music_keeps_renderer_ownership_and_reports_audio(self):
         with tempfile.TemporaryDirectory() as directory:

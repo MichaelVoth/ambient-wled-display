@@ -24,6 +24,7 @@ def render_music(
     features: dict[str, float],
     effect: str,
     lanes: tuple[LaneConfig, ...] | None = None,
+    background_level: float = 0.42,
 ) -> list[RGB]:
     """Composite a vivid, continuously rendered music layer over the living base."""
     if effect not in MUSIC_EFFECTS:
@@ -34,12 +35,15 @@ def render_music(
     energy = clamp(features.get("energy", 0.0))
     beat = clamp(features.get("beat", 0.0))
     phase = float(features.get("phase", 0.0))
+    background_level = clamp(background_level, 0.15, 1.0)
     output = list(base)
 
     for lane_number, lane in enumerate(device.lanes if lanes is None else lanes):
         for absolute in range(lane.start, lane.start + lane.length):
             vertical = lane_distance_from_top(lane, absolute)
-            underlying = saturate(base[absolute], 1.32)
+            # Music needs a darker stage than everyday ambient light so the
+            # note-driven shapes remain readable instead of blending away.
+            underlying = saturate(scale(base[absolute], background_level), 1.32)
 
             if effect == "lava":
                 broad = math.sin(vertical * math.tau * 0.72 - phase * 0.11) * 0.18

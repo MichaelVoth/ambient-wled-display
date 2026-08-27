@@ -36,9 +36,13 @@
     button.urgent { border-color:#d64e4e; color:#ff9f9f; }
     button.music { border-color:#ff3fd4; color:#fff; background:linear-gradient(120deg,#d11295,#6424db 52%,#087f9d); font-weight:700; }
     .music-card { background:radial-gradient(circle at 85% 10%,#4c145b 0,transparent 38%),linear-gradient(135deg,#16152b,#111c2d); border-color:#6d397d; }
-    .music-meter { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-top:12px; }
-    .music-meter span { height:7px; border-radius:99px; background:#252b3d; overflow:hidden; }
+    .music-meter { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin-top:14px; }
+    .music-meter > span { min-width:0; border-radius:8px; background:#101621; padding:7px; overflow:hidden; }
+    .music-meter b { display:flex; justify-content:space-between; gap:4px; font-size:11px; }
+    .music-meter em { color:var(--muted); font-style:normal; font-weight:500; }
+    .music-meter small { color:var(--muted); display:block; min-height:31px; font-size:10px; line-height:1.25; margin:3px 0 5px; }
     .music-meter i { display:block; height:100%; width:0; transition:width 90ms linear; }
+    .music-meter .bar { display:block; height:7px; border-radius:99px; background:#252b3d; overflow:hidden; padding:0; }
     .music-meter span:nth-child(1) i { background:#ff431c; }
     .music-meter span:nth-child(2) i { background:#ff2fe0; }
     .music-meter span:nth-child(3) i { background:#35ff72; }
@@ -117,15 +121,21 @@
             <option value="comets">Comets — beat-launched streaks</option>
             <option value="aurora">Aurora — musical curtains and stars</option>
           </select>
+          <label for="musicBackground">Background behind music</label>
+          <select id="musicBackground">
+            <option value="0.28">High contrast — mostly dark behind effects</option>
+            <option value="0.42" selected>Balanced — dim ambient color remains</option>
+            <option value="0.7">Soft blend — more ambient color remains</option>
+          </select>
         </div>
         <div class="row" style="margin-top:14px">
           <button id="musicToggle" class="music">Start music lights</button>
         </div>
         <div class="music-meter" aria-label="Live audio response">
-          <span title="Bass"><i id="musicBass"></i></span>
-          <span title="Midrange"><i id="musicMid"></i></span>
-          <span title="Treble"><i id="musicTreble"></i></span>
-          <span title="Beat"><i id="musicBeat"></i></span>
+          <span><b>Bass <em id="musicBassValue">0%</em></b><small>Low notes make large waves and heat.</small><span class="bar"><i id="musicBass"></i></span></span>
+          <span><b>Mids <em id="musicMidValue">0%</em></b><small>Voices and instruments shape the body.</small><span class="bar"><i id="musicMid"></i></span></span>
+          <span><b>Highs <em id="musicTrebleValue">0%</em></b><small>Hi-hats and detail make tips and sparks.</small><span class="bar"><i id="musicTreble"></i></span></span>
+          <span><b>Beat <em id="musicBeatValue">0%</em></b><small>Detected kicks add a quick accent.</small><span class="bar"><i id="musicBeat"></i></span></span>
         </div>
         <div id="musicNotice" class="notice">The laptop helper connects automatically when you sign in.</div>
       </section>
@@ -342,10 +352,12 @@
         document.querySelector('#musicToggle').classList.toggle('active',!!music.enabled);
         document.querySelector('#musicToggle').textContent=music.enabled?'Stop music lights':'Start music lights';
         document.querySelector('#musicEffect').value=music.effect||'pulse';
-        document.querySelector('#musicBass').style.width=`${Math.round((music.features?.bass||0)*100)}%`;
-        document.querySelector('#musicMid').style.width=`${Math.round((music.features?.mid||0)*100)}%`;
-        document.querySelector('#musicTreble').style.width=`${Math.round((music.features?.treble||0)*100)}%`;
-        document.querySelector('#musicBeat').style.width=`${Math.round((music.features?.beat||0)*100)}%`;
+        document.querySelector('#musicBackground').value=String(music.background??0.42);
+        for(const [name,id] of [['bass','musicBass'],['mid','musicMid'],['treble','musicTreble'],['beat','musicBeat']]) {
+          const percent=Math.round((music.features?.[name]||0)*100);
+          document.querySelector(`#${id}`).style.width=`${percent}%`;
+          document.querySelector(`#${id}Value`).textContent=`${percent}%`;
+        }
         const musicNotice=document.querySelector('#musicNotice');
         if(music.enabled) {
           musicNotice.textContent=music.receiving_audio?'Music lights are on and receiving live audio.':'Music lights are on; waiting for sound from the selected speaker route.';
@@ -415,7 +427,7 @@
           const route=document.querySelector('#musicRoute').value;
           if(!route) throw new Error('The laptop helper is offline or no speaker route is available.');
           notice.textContent='Connecting the speaker, audio capture, and lights…'; notice.className='notice';
-          await api('/api/music',{action:'start',route,effect:document.querySelector('#musicEffect').value});
+          await api('/api/music',{action:'start',route,effect:document.querySelector('#musicEffect').value,background:+document.querySelector('#musicBackground').value});
           notice.textContent='Music lights are on. Press play in any music app.';
         }
         notice.className='notice ok'; await refresh();
@@ -429,7 +441,12 @@
     document.querySelector('#resumeAmbient').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/mode',{mode:'renderer'}); },'Ambient lighting resumed.');
     document.querySelector('#startMusic').onclick=toggleMusic;
     document.querySelector('#musicToggle').onclick=toggleMusic;
-    document.querySelector('#musicEffect').onchange=async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'effect',effect:document.querySelector('#musicEffect').value}); };
+    async function updateMusicLook() {
+      if(!status?.music?.enabled) return;
+      await api('/api/music',{action:'effect',effect:document.querySelector('#musicEffect').value,background:+document.querySelector('#musicBackground').value});
+    }
+    document.querySelector('#musicEffect').onchange=updateMusicLook;
+    document.querySelector('#musicBackground').onchange=updateMusicLook;
     document.querySelector('#quietNow').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/mode',{mode:'off'}); },'Renderer output stopped.');
     for(const button of document.querySelectorAll('[data-everyday-signal]')) button.onclick=()=>everyday(()=>api('/api/events/signal',{signal:button.dataset.everydaySignal,take_output:true}),`${button.textContent} animation started.`);
     document.querySelector('#previewHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:false}),'Preview started.');

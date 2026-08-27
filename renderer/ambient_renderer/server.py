@@ -135,6 +135,7 @@ class RendererHandler(BaseHTTPRequestHandler):
             elif path == "/api/music":
                 action = str(body.get("action", ""))
                 effect = str(body.get("effect", "pulse"))
+                background = body.get("background")
                 if action == "start":
                     route = str(body.get("route", "")).strip()
                     if not route:
@@ -143,7 +144,7 @@ class RendererHandler(BaseHTTPRequestHandler):
                         "/api/start",
                         {"route": route, "effect": effect},
                     )
-                    music = self.server.engine.set_music(True, effect)
+                    music = self.server.engine.set_music(True, effect, background)
                 elif action == "stop":
                     self.server.engine.set_music(False, effect)
                     try:
@@ -152,7 +153,7 @@ class RendererHandler(BaseHTTPRequestHandler):
                         companion = {"available": False, "error": str(exc)}
                     music = self.server.engine.music_status()
                 elif action == "effect":
-                    music = self.server.engine.set_music(True, effect)
+                    music = self.server.engine.set_music(True, effect, background)
                     companion = {"available": True}
                 else:
                     raise ValueError("music action must be start, stop, or effect")

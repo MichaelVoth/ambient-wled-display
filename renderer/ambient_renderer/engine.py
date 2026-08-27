@@ -122,6 +122,7 @@ class RendererEngine:
         self.music_companion_url = config.music_companion_url
         self.music_enabled = False
         self.music_effect = "pulse"
+        self.music_background = 0.42
         self.audio_features = {
             "bass": 0.0,
             "mid": 0.0,
@@ -179,14 +180,23 @@ class RendererEngine:
                 self.event_queue.clear()
         self._record("mode_changed", mode=mode)
 
-    def set_music(self, enabled: bool, effect: str | None = None) -> dict[str, Any]:
+    def set_music(
+        self,
+        enabled: bool,
+        effect: str | None = None,
+        background: float | None = None,
+    ) -> dict[str, Any]:
         if effect is not None and effect not in MUSIC_EFFECTS:
             raise ValueError(f"music effect must be one of: {', '.join(sorted(MUSIC_EFFECTS))}")
+        if background is not None and not 0.15 <= float(background) <= 1.0:
+            raise ValueError("music background must be between 0.15 and 1.0")
         if enabled:
             self._validate_outputs()
         with self.lock:
             if effect is not None:
                 self.music_effect = effect
+            if background is not None:
+                self.music_background = float(background)
             self.music_enabled = bool(enabled)
             if enabled:
                 self.mode = "renderer"
@@ -224,6 +234,7 @@ class RendererEngine:
             return {
                 "enabled": self.music_enabled,
                 "effect": self.music_effect,
+                "background": self.music_background,
                 "receiving_audio": bool(
                     self.music_enabled and age is not None and age < 1.2
                 ),
@@ -421,6 +432,7 @@ class RendererEngine:
             context = dict(self.context)
             music_enabled = self.music_enabled
             music_effect = self.music_effect
+            music_background = self.music_background
             audio_features = dict(self.audio_features)
             audio_age = now - self.audio_updated_at if self.audio_updated_at else float("inf")
 
@@ -476,7 +488,10 @@ class RendererEngine:
                     for name in ("bass", "mid", "treble", "energy", "beat"):
                         faded[name] *= fade
                     audio_features = faded
-                frame = render_music(frame, device, now, audio_features, music_effect)
+                frame = render_music(
+                    frame, device, now, audio_features, music_effect,
+                    background_level=music_background,
+                )
             if isinstance(event, HourEvent):
                 target_lanes = self._target_lanes(device, event.targets)
                 if target_lanes:

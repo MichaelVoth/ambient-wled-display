@@ -108,6 +108,18 @@ starts private audio analysis, and adds a reactive layer inside the renderer.
 The live meters confirm that bass, mids, treble, and beats are arriving. Hourly
 and urgent semantic events can still be composed by the same central owner.
 
+The four meters are a translation guide rather than a generic equalizer:
+
+- **Bass** creates the largest waves and warmer heat.
+- **Mids** (voices and instruments) shape the main body of the effect.
+- **Highs** add small bright tips and sparks.
+- **Beat** adds a short accent when a kick is detected.
+
+Use **Background behind music** to control separation. **High contrast** turns
+the ambient nebula into a mostly dark stage; **Balanced** keeps a dim sense of
+the house behind the effect; **Soft blend** deliberately combines both layers.
+The selected music layer still belongs to the renderer—not to WLED or LedFx.
+
 Events and layers can be scoped to configured device or lane IDs. Omitting
 `targets` means every configured lane:
 

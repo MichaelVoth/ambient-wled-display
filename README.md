@@ -42,6 +42,7 @@ pixel frames, then sends those frames through WLED's realtime UDP interface.
 - Weather, presence, workday, Pi-hole, energy, and GitHub Actions examples
 - WLED preset provisioning through the JSON API
 - AirPods, laptop-speaker, and office-speaker routing from the same control panel
+- Music contrast control and a plain-language live bass/mids/highs/beat guide
 - No custom WLED firmware required
 
 ## Architecture
