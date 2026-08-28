@@ -149,7 +149,7 @@ class MusicCompanion:
         route = next((item for item in self.config["routes"] if item["id"] == route_id), None)
         if route is None:
             raise ValueError("unknown speaker route")
-        if effect not in {"meter", "pulse", "prism", "spectrum", "lava", "comets", "aurora"}:
+        if effect not in {"meter", "chunks", "firefly"}:
             raise ValueError("unknown music effect")
         healthy, reason = self._route_health(route)
         if not healthy:

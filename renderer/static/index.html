@@ -117,19 +117,11 @@
           <label for="musicEffect">Light style</label>
           <select id="musicEffect">
             <option value="meter">Meter — black background, top-down volume</option>
-            <option value="pulse">Pulse — bass waves and bright sparks</option>
-            <option value="prism">Prism — full-color flowing bands</option>
-            <option value="spectrum">Spectrum — lows, mids, and highs</option>
-            <option value="lava">Lava — swelling multicolor pools</option>
-            <option value="comets">Comets — beat-launched streaks</option>
-            <option value="aurora">Aurora — musical curtains and stars</option>
+            <option value="chunks">Chunks — a few uneven islands on black</option>
+            <option value="firefly">Firefly — one dancing LED on black</option>
           </select>
-          <label for="musicBackground">Background behind music</label>
-          <select id="musicBackground">
-            <option value="0.28">High contrast — mostly dark behind effects</option>
-            <option value="0.42" selected>Balanced — dim ambient color remains</option>
-            <option value="0.7">Soft blend — more ambient color remains</option>
-          </select>
+          <label for="musicSensitivity">Sensitivity / maximum reach <output id="musicSensitivityLabel">22% · about 30 LEDs</output></label>
+          <input id="musicSensitivity" type="range" min="0.05" max="1" step="0.01" value="0.22">
         </div>
         <div class="row" style="margin-top:14px">
           <button id="musicToggle" class="music">Start music lights</button>
@@ -361,15 +353,13 @@
         document.querySelector('#musicEffect').value=activeEffect;
         const musicGuides={
           meter:'A simple color meter expands down from the top. Everything below it stays black.',
-          pulse:'On a kick, a single bright gold wave should travel across the darker strip.',
-          prism:'Each instrument range lights a bold color band; a beat briefly turns it warm white.',
-          spectrum:'Bass, vocals, and high notes occupy visibly different parts of the strip.',
-          lava:'Slow color pools react to the music; a beat sends a warm gold ripple through them.',
-          comets:'Listen for a kick and watch a bright streak launch through the dark field.',
-          aurora:'Music raises and brightens saturated color curtains; high notes make stars.'
+          chunks:'A small number of uneven color islands appear and disappear with volume and beats.',
+          firefly:'One LED travels up and down the black strip, accelerating and flashing on beats.'
         };
-        document.querySelector('#musicGuide').innerHTML=`<strong>What to watch:</strong> ${musicGuides[activeEffect]||musicGuides.pulse}`;
-        document.querySelector('#musicBackground').value=String(music.background??0.42);
+        document.querySelector('#musicGuide').innerHTML=`<strong>What to watch:</strong> ${musicGuides[activeEffect]||musicGuides.meter}`;
+        const sensitivity=music.sensitivity??0.22;
+        document.querySelector('#musicSensitivity').value=sensitivity;
+        document.querySelector('#musicSensitivityLabel').textContent=`${Math.round(sensitivity*100)}% · about ${Math.round(sensitivity*139)} LEDs`;
         for(const [name,id] of [['bass','musicBass'],['mid','musicMid'],['treble','musicTreble'],['beat','musicBeat']]) {
           const percent=Math.round((music.features?.[name]||0)*100);
           document.querySelector(`#${id}`).style.width=`${percent}%`;
@@ -457,7 +447,7 @@
           const route=document.querySelector('#musicRoute').value;
           if(!route) throw new Error('The laptop helper is offline or no speaker route is available.');
           notice.textContent='Connecting the speaker, audio capture, and lights…'; notice.className='notice';
-          await api('/api/music',{action:'start',route,effect:document.querySelector('#musicEffect').value,background:+document.querySelector('#musicBackground').value});
+          await api('/api/music',{action:'start',route,effect:document.querySelector('#musicEffect').value,sensitivity:+document.querySelector('#musicSensitivity').value});
           notice.textContent='Music lights are on. Press play in any music app.';
         }
         notice.className='notice ok'; await refresh();
@@ -483,10 +473,10 @@
     };
     async function updateMusicLook() {
       if(!status?.music?.enabled) return;
-      await api('/api/music',{action:'effect',effect:document.querySelector('#musicEffect').value,background:+document.querySelector('#musicBackground').value});
+      await api('/api/music',{action:'effect',effect:document.querySelector('#musicEffect').value,sensitivity:+document.querySelector('#musicSensitivity').value});
     }
     document.querySelector('#musicEffect').onchange=updateMusicLook;
-    document.querySelector('#musicBackground').onchange=updateMusicLook;
+    document.querySelector('#musicSensitivity').onchange=updateMusicLook;
     document.querySelector('#quietNow').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/mode',{mode:'off'}); },'Renderer output stopped.');
     for(const button of document.querySelectorAll('[data-everyday-signal]')) button.onclick=()=>everyday(()=>api('/api/events/signal',{signal:button.dataset.everydaySignal,take_output:true}),`${button.textContent} animation started.`);
     document.querySelector('#previewHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:false}),'Preview started.');

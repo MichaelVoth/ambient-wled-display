@@ -224,24 +224,22 @@ class RendererTests(unittest.TestCase):
         features = {"bass": 0.9, "mid": 0.72, "treble": 0.8, "energy": 0.74, "beat": 1.0, "phase": 3.2}
         frames = {
             effect: render_music(base, device, 12.0, features, effect)
-            for effect in ("pulse", "prism", "spectrum", "lava", "comets", "aurora")
+            for effect in ("meter", "chunks", "firefly")
         }
-        self.assertEqual(len({tuple(frame) for frame in frames.values()}), 6)
+        self.assertEqual(len({tuple(frame) for frame in frames.values()}), 3)
         for frame in frames.values():
             self.assertGreater(max(max(pixel) for pixel in frame), 220)
             self.assertNotEqual(frame, base)
-        high_contrast = render_music(base, device, 12.0, features, "lava", background_level=0.28)
-        blended = render_music(base, device, 12.0, features, "lava", background_level=0.7)
-        self.assertNotEqual(high_contrast, blended)
 
     def test_music_meter_uses_true_black_negative_space(self):
         device = self.device()
         base = [(88, 80, 122)] * device.pixel_count
         quiet = render_music(base, device, 0.0, {"energy": 0.0}, "meter")
-        active = render_music(base, device, 0.0, {"energy": 0.45}, "meter")
+        active = render_music(base, device, 0.0, {"energy": 1.0}, "meter", sensitivity=0.22)
         self.assertEqual(quiet, [(0, 0, 0)] * device.pixel_count)
         self.assertGreater(sum(pixel != (0, 0, 0) for pixel in active), 0)
         self.assertGreater(sum(pixel == (0, 0, 0) for pixel in active), 0)
+        self.assertLessEqual(sum(pixel != (0, 0, 0) for pixel in active), round(device.pixel_count * 0.22) + 1)
 
     def test_integrated_music_keeps_renderer_ownership_and_reports_audio(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -256,13 +254,13 @@ class RendererTests(unittest.TestCase):
             engine = RendererEngine(config)
             engine._validate_outputs = lambda: None
             try:
-                engine.set_music(True, "prism")
+                engine.set_music(True, "chunks")
                 engine.update_audio({"bass": 0.8, "mid": 0.5, "treble": 0.4, "energy": 0.7, "beat": 1, "phase": 2})
                 status = engine.status()
                 self.assertEqual(status["mode"], "renderer")
                 self.assertTrue(status["music"]["enabled"])
                 self.assertTrue(status["music"]["receiving_audio"])
-                self.assertEqual(status["music"]["effect"], "prism")
+                self.assertEqual(status["music"]["effect"], "chunks")
                 self.assertTrue(engine.trigger_signal("success")["accepted"])
                 engine.set_music(False)
                 self.assertFalse(engine.status()["music"]["enabled"])
