@@ -47,6 +47,8 @@
     .music-meter span:nth-child(2) i { background:#ff2fe0; }
     .music-meter span:nth-child(3) i { background:#35ff72; }
     .music-meter span:nth-child(4) i { background:#ffbe18; }
+    .music-signal { margin-top:10px; padding:9px 10px; border-radius:8px; background:#101621; color:#cad6e8; font-size:12px; }
+    .music-signal strong { color:#fff; }
     .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
     .status { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
     .metric { background:#0d1219; border-radius:9px; padding:10px; }
@@ -114,7 +116,7 @@
           <select id="musicRoute"><option value="">Finding speakers…</option></select>
           <label for="musicEffect">Light style</label>
           <select id="musicEffect">
-            <option value="pulse">Pulse — bass waves and bright sparks</option>
+            <option value="pulse">Pulse — clearest beat test</option>
             <option value="prism">Prism — full-color flowing bands</option>
             <option value="spectrum">Spectrum — lows, mids, and highs</option>
             <option value="lava">Lava — swelling multicolor pools</option>
@@ -137,6 +139,8 @@
           <span><b>Highs <em id="musicTrebleValue">0%</em></b><small>Hi-hats and detail make tips and sparks.</small><span class="bar"><i id="musicTreble"></i></span></span>
           <span><b>Beat <em id="musicBeatValue">0%</em></b><small>Detected kicks add a quick accent.</small><span class="bar"><i id="musicBeat"></i></span></span>
         </div>
+        <div id="musicSignal" class="music-signal"><strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED</div>
+        <div id="musicGuide" class="music-signal"><strong>What to watch:</strong> on a kick, a single bright gold wave should travel across the darker strip.</div>
         <div id="musicNotice" class="notice">The laptop helper connects automatically when you sign in.</div>
       </section>
       <section>
@@ -351,7 +355,17 @@
         document.querySelector('#startMusic').classList.toggle('active',!!music.enabled);
         document.querySelector('#musicToggle').classList.toggle('active',!!music.enabled);
         document.querySelector('#musicToggle').textContent=music.enabled?'Stop music lights':'Start music lights';
-        document.querySelector('#musicEffect').value=music.effect||'pulse';
+        const activeEffect=music.effect||'pulse';
+        document.querySelector('#musicEffect').value=activeEffect;
+        const musicGuides={
+          pulse:'On a kick, a single bright gold wave should travel across the darker strip.',
+          prism:'Each instrument range lights a bold color band; a beat briefly turns it warm white.',
+          spectrum:'Bass, vocals, and high notes occupy visibly different parts of the strip.',
+          lava:'Slow color pools react to the music; a beat sends a warm gold ripple through them.',
+          comets:'Listen for a kick and watch a bright streak launch through the dark field.',
+          aurora:'Music raises and brightens saturated color curtains; high notes make stars.'
+        };
+        document.querySelector('#musicGuide').innerHTML=`<strong>What to watch:</strong> ${musicGuides[activeEffect]||musicGuides.pulse}`;
         document.querySelector('#musicBackground').value=String(music.background??0.42);
         for(const [name,id] of [['bass','musicBass'],['mid','musicMid'],['treble','musicTreble'],['beat','musicBeat']]) {
           const percent=Math.round((music.features?.[name]||0)*100);
@@ -359,9 +373,22 @@
           document.querySelector(`#${id}Value`).textContent=`${percent}%`;
         }
         const musicNotice=document.querySelector('#musicNotice');
+        const signal=Math.max(music.features?.bass||0,music.features?.mid||0,music.features?.treble||0,music.features?.energy||0);
+        const musicSignal=document.querySelector('#musicSignal');
         if(music.enabled) {
-          musicNotice.textContent=music.receiving_audio?'Music lights are on and receiving live audio.':'Music lights are on; waiting for sound from the selected speaker route.';
-          musicNotice.className=music.receiving_audio?'notice ok':'notice';
+          if(music.receiving_audio&&signal>0.015) {
+            musicNotice.textContent='Hearing sound now. The meter values are driving the effect.';
+            musicSignal.innerHTML='<strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED · sound detected';
+            musicNotice.className='notice ok';
+          } else if(music.receiving_audio) {
+            musicNotice.textContent='The audio path is connected, but it is hearing silence right now. Start music and watch the values rise.';
+            musicSignal.innerHTML='<strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED · connected, waiting for sound';
+            musicNotice.className='notice';
+          } else {
+            musicNotice.textContent='Music lights are on; waiting for the laptop audio analyzer.';
+            musicSignal.innerHTML='<strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED · reconnecting';
+            musicNotice.className='notice';
+          }
         }
         document.querySelector('#quietNow').classList.toggle('active',status.mode==='off');
         const modeLabel=music.enabled?(music.receiving_audio?'Dancing to the music':'Music mode · waiting for audio'):{renderer:'Ambient renderer',preview:'Simulator only',music:'Legacy music controller',off:'Output quiet'}[status.mode]||status.mode;
@@ -394,7 +421,7 @@
         const route=document.querySelector('#musicRoute'); route.innerHTML='';
         for(const item of musicSetup.companion?.routes||[]) {
           const option=document.createElement('option'); option.value=item.id;
-          option.textContent=item.available?item.label:`${item.label} — unavailable`;
+          option.textContent=item.available?item.label:`${item.label} — unavailable (${item.reason||'speaker missing'})`;
           option.disabled=!item.available; route.appendChild(option);
           if(item.selected&&item.available) route.value=item.id;
         }

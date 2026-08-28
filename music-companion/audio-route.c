@@ -20,6 +20,22 @@ static int name_for_device(AudioDeviceID device, char *buffer, size_t length) {
     return ok;
 }
 
+static int uid_for_device(AudioDeviceID device, char *buffer, size_t length) {
+    AudioObjectPropertyAddress address = {
+        kAudioDevicePropertyDeviceUID,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+    };
+    CFStringRef uid = NULL;
+    UInt32 size = sizeof(uid);
+    if (AudioObjectGetPropertyData(device, &address, 0, NULL, &size, &uid) != noErr || !uid) {
+        return 0;
+    }
+    int ok = CFStringGetCString(uid, buffer, (CFIndex)length, kCFStringEncodingUTF8);
+    CFRelease(uid);
+    return ok;
+}
+
 static AudioDeviceID default_output(void) {
     AudioObjectPropertyAddress address = {
         kAudioHardwarePropertyDefaultOutputDevice,
@@ -80,6 +96,75 @@ static int set_output(AudioDeviceID device) {
     return 1;
 }
 
+static AudioDeviceID device_for_uid(const char *uid, AudioDeviceID *devices, UInt32 count) {
+    for (UInt32 index = 0; index < count; index++) {
+        char candidate[512];
+        if (uid_for_device(devices[index], candidate, sizeof(candidate)) && strcmp(uid, candidate) == 0) {
+            return devices[index];
+        }
+    }
+    return kAudioObjectUnknown;
+}
+
+static void print_device_name(AudioDeviceID device) {
+    char name[512] = "unknown";
+    name_for_device(device, name, sizeof(name));
+    printf("%u\t%s", device, name);
+}
+
+static int inspect_aggregate(AudioDeviceID device, AudioDeviceID *devices, UInt32 count) {
+    char name[512] = "unknown";
+    name_for_device(device, name, sizeof(name));
+    printf("Route: %s\n", name);
+
+    AudioObjectPropertyAddress members_address = {
+        kAudioAggregateDevicePropertyFullSubDeviceList,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+    };
+    CFArrayRef members = NULL;
+    UInt32 size = sizeof(members);
+    if (AudioObjectGetPropertyData(device, &members_address, 0, NULL, &size, &members) != noErr || !members) {
+        puts("This route is not an inspectable Multi-Output Device.");
+        return 0;
+    }
+    puts("Configured members:");
+    for (CFIndex index = 0; index < CFArrayGetCount(members); index++) {
+        CFStringRef uid_ref = (CFStringRef)CFArrayGetValueAtIndex(members, index);
+        char uid[512] = "unknown";
+        CFStringGetCString(uid_ref, uid, sizeof(uid), kCFStringEncodingUTF8);
+        AudioDeviceID member = device_for_uid(uid, devices, count);
+        printf("  %s\t", member == kAudioObjectUnknown ? "missing" : "present");
+        if (member == kAudioObjectUnknown) {
+            puts(uid);
+        } else {
+            print_device_name(member);
+            puts("");
+        }
+    }
+    CFRelease(members);
+
+    AudioObjectPropertyAddress active_address = {
+        kAudioAggregateDevicePropertyActiveSubDeviceList,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+    };
+    size = 0;
+    if (AudioObjectGetPropertyDataSize(device, &active_address, 0, NULL, &size) == noErr && size) {
+        AudioDeviceID *active = malloc(size);
+        if (active && AudioObjectGetPropertyData(device, &active_address, 0, NULL, &size, active) == noErr) {
+            puts("Active members:");
+            for (UInt32 index = 0; index < size / sizeof(AudioDeviceID); index++) {
+                printf("  ");
+                print_device_name(active[index]);
+                puts("");
+            }
+        }
+        free(active);
+    }
+    return 1;
+}
+
 int main(int argc, char **argv) {
     UInt32 count = 0;
     AudioDeviceID *devices = all_devices(&count);
@@ -116,7 +201,20 @@ int main(int argc, char **argv) {
         free(devices);
         return 1;
     }
+    if (argc == 3 && strcmp(argv[1], "inspect") == 0) {
+        for (UInt32 index = 0; index < count; index++) {
+            char name[512];
+            if (name_for_device(devices[index], name, sizeof(name)) && strcmp(name, argv[2]) == 0) {
+                int ok = inspect_aggregate(devices[index], devices, count);
+                free(devices);
+                return ok ? 0 : 1;
+            }
+        }
+        fprintf(stderr, "Audio output not found: %s\n", argv[2]);
+        free(devices);
+        return 1;
+    }
     free(devices);
-    fputs("Usage: audio-route {list|set DEVICE_NAME}\n", stderr);
+    fputs("Usage: audio-route {list|set|inspect DEVICE_NAME}\n", stderr);
     return 2;
 }

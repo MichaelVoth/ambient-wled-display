@@ -64,6 +64,24 @@ class MusicCompanion:
             devices.append({"id": int(identifier), "name": name, "isDefault": selected == "1"})
         return devices
 
+    def _route_health(self, route: dict[str, Any]) -> tuple[bool, str | None]:
+        """Reject a saved Multi-Output Device when one of its speakers is gone."""
+        try:
+            result = subprocess.run(
+                [self.config["audio_route_tool"], "inspect", str(route["device"])],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=4,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, str(exc)
+        if result.returncode != 0:
+            return False, "could not inspect this speaker route"
+        if "missing\t" in result.stdout:
+            return False, "the speaker is not connected to this saved route"
+        return True, None
+
     def status(self) -> dict[str, Any]:
         try:
             available = {device["name"]: device for device in self._devices()}
@@ -71,14 +89,16 @@ class MusicCompanion:
         except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
             available = {}
             device_error = str(exc)
-        routes = [
-            {
+        routes = []
+        for route in self.config["routes"]:
+            present = route["device"] in available
+            healthy, reason = self._route_health(route) if present else (False, "this route is not available on the Mac")
+            routes.append({
                 **route,
-                "available": route["device"] in available,
+                "available": present and healthy,
                 "selected": bool(available.get(route["device"], {}).get("isDefault")),
-            }
-            for route in self.config["routes"]
-        ]
+                "reason": reason,
+            })
         with self.lock:
             running = bool(self.thread and self.thread.is_alive())
             return {
@@ -98,6 +118,9 @@ class MusicCompanion:
             raise ValueError("unknown speaker route")
         if effect not in {"pulse", "prism", "spectrum", "lava", "comets", "aurora"}:
             raise ValueError("unknown music effect")
+        healthy, reason = self._route_health(route)
+        if not healthy:
+            raise ValueError(f"{route['label']} is unavailable: {reason}")
         subprocess.run(
             [self.config["audio_route_tool"], "set", route["device"]],
             check=True,
@@ -213,13 +236,16 @@ class MusicCompanion:
                     name: min(1.0, energy * float(np.sum(spectrum[mask]) / total) * multiplier)
                     for (name, mask), multiplier in zip(masks.items(), (5.0, 2.6, 4.2))
                 }
-                bass_floor = bass_floor * 0.96 + values["bass"] * 0.04
-                beat = 1.0 if energy > 0.08 and values["bass"] > max(0.11, bass_floor * 1.32) else 0.0
+                bass_floor = bass_floor * 0.985 + values["bass"] * 0.015
+                beat = 1.0 if energy > 0.025 and values["bass"] > max(0.025, bass_floor * 1.18) else 0.0
                 values.update({"energy": energy, "beat": beat})
                 for name, value in values.items():
+                    if name == "beat":
+                        continue
                     rate = 0.58 if value > smoothed[name] else 0.16
                     smoothed[name] += (value - smoothed[name]) * rate
-                phase += 0.18 + smoothed["bass"] * 0.46 + smoothed["energy"] * 0.18
+                smoothed["beat"] = max(beat, smoothed["beat"] * 0.72)
+                phase += 0.015 + smoothed["bass"] * 0.22 + smoothed["energy"] * 0.28
                 payload = {**smoothed, "phase": phase}
                 if self._post_features(payload):
                     with self.lock:
@@ -379,7 +405,7 @@ class MusicCompanion:
 
     def _analyze_ledfx(self) -> None:
         smoothed = {"bass": 0.0, "mid": 0.0, "treble": 0.0, "energy": 0.0, "beat": 0.0}
-        bass_floor = 0.08
+        bass_floor = 0.02
         phase = 0.0
         last_sent = 0.0
         try:
@@ -409,12 +435,16 @@ class MusicCompanion:
                     "treble": band(2400, 15000),
                     "energy": min(1.0, float(np.quantile(melbank, 0.78))),
                 }
-                bass_floor = bass_floor * 0.96 + values["bass"] * 0.04
-                values["beat"] = 1.0 if values["bass"] > max(0.12, bass_floor * 1.3) else 0.0
+                bass_floor = bass_floor * 0.985 + values["bass"] * 0.015
+                raw_beat = 1.0 if values["energy"] > 0.018 and values["bass"] > max(0.02, bass_floor * 1.18) else 0.0
+                values["beat"] = raw_beat
                 for name, value in values.items():
+                    if name == "beat":
+                        continue
                     rate = 0.62 if value > smoothed[name] else 0.2
                     smoothed[name] += (value - smoothed[name]) * rate
-                phase += 0.18 + smoothed["bass"] * 0.46 + smoothed["energy"] * 0.18
+                smoothed["beat"] = max(raw_beat, smoothed["beat"] * 0.72)
+                phase += 0.015 + smoothed["bass"] * 0.22 + smoothed["energy"] * 0.28
                 if self._post_features({**smoothed, "phase": phase}):
                     with self.lock:
                         self.last_frame_at = now
