@@ -265,11 +265,20 @@ class RendererTests(unittest.TestCase):
         features = {"energy": 0.55, "treble": 0.3, "phase": 1.25}
         first = render_music([], device, 10.00, features, "firefly", motion_speed=1.0)
         second = render_music([], device, 10.04, features, "firefly", motion_speed=1.0)
-        self.assertEqual(sum(pixel != BLACK for pixel in first), len(device.lanes))
-        self.assertEqual(sum(pixel != BLACK for pixel in second), len(device.lanes))
+        self.assertGreaterEqual(sum(pixel != BLACK for pixel in first), len(device.lanes))
+        self.assertGreaterEqual(sum(pixel != BLACK for pixel in second), len(device.lanes))
+        self.assertLess(sum(pixel != BLACK for pixel in first), device.pixel_count // 4)
         first_positions = [index for index, pixel in enumerate(first) if pixel != BLACK]
         second_positions = [index for index, pixel in enumerate(second) if pixel != BLACK]
-        self.assertTrue(all(abs(after - before) <= 2 for before, after in zip(first_positions, second_positions)))
+        # Pixel quantization can add or remove one edge pixel as the halo
+        # moves, so compare the light's center rather than list lengths.
+        self.assertLessEqual(abs(sum(second_positions) / len(second_positions) - sum(first_positions) / len(first_positions)), 5)
+
+    def test_music_firefly_beats_expand_the_dot(self):
+        device = self.device()
+        quiet = render_music([], device, 10.0, {"energy": 0.4, "bass": 0.2, "phase": 1.0}, "firefly")
+        beat = render_music([], device, 10.0, {"energy": 0.4, "bass": 0.2, "beat": 1.0, "phase": 1.0}, "firefly")
+        self.assertGreater(sum(pixel != BLACK for pixel in beat), sum(pixel != BLACK for pixel in quiet))
 
     def test_integrated_music_keeps_renderer_ownership_and_reports_audio(self):
         with tempfile.TemporaryDirectory() as directory:

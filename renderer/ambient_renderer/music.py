@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import math
 import colorsys
+import math
 
 from .color import RGB, clamp, mix, scale
 from .config import DeviceConfig, LaneConfig
@@ -46,6 +46,7 @@ def render_music(
     del base, background_level
     if effect not in MUSIC_EFFECTS:
         effect = "meter"
+    bass = clamp(features.get("bass", 0.0))
     treble = clamp(features.get("treble", 0.0))
     energy = clamp(features.get("energy", 0.0))
     beat = clamp(features.get("beat", 0.0))
@@ -75,7 +76,7 @@ def render_music(
         elif effect == "chunks":
             # Irregular, short islands react to music; the majority of the
             # wall remains black. Positions change only as music changes.
-            activity = clamp(energy * sensitivity * 2.6)
+            activity = clamp(energy * (0.8 + sensitivity * 2.0))
             count = 1 + int(sensitivity > 0.35) + int(sensitivity > 0.72)
             for chunk in range(count):
                 seed = lane_number * 31.0 + chunk * 7.0
@@ -86,7 +87,7 @@ def render_music(
                 )
                 half_width = (1.0 + _noise(seed + 2.0) * (2.0 + activity * 9.0)) / lane.length
                 color = primary if chunk % 2 == 0 else accent
-                brightness = clamp(activity * (0.68 + _noise(seed + 5.0) * 0.32) + beat * 0.72)
+                brightness = clamp(0.16 + activity * (0.72 + _noise(seed + 5.0) * 0.36) + beat * 0.72)
                 for absolute in range(lane.start, lane.start + lane.length):
                     vertical = lane_distance_from_top(lane, absolute)
                     amount = clamp(1.0 - abs(vertical - center) / half_width)
@@ -94,15 +95,21 @@ def render_music(
                         output[absolute] = mix(output[absolute], scale(color, brightness), amount)
 
         else:  # firefly
-            # One visible pixel, moving organically up and down. A beat gives
-            # it a quick bright flash but never creates a second pattern.
-            position = 0.5 + 0.46 * math.sin(
-                now * motion_speed * 0.52 + phase * 2.4 + lane_number * 1.9
-            )
-            index = min(lane.length - 1, max(0, int(position * lane.length)))
+            # One point travels continuously. Bass and overall energy change
+            # its travel rate; a beat briefly expands a soft halo around it.
+            rhythm_speed = 0.62 + bass * 1.35 + energy * 0.8
+            travel = now * motion_speed * 0.22 + phase * rhythm_speed + lane_number * 1.9
+            position = 0.5 + 0.46 * math.sin(travel)
             color = mix(primary, accent, clamp(beat * 0.7 + treble * 0.18))
-            brightness = clamp(0.28 + energy * sensitivity * 2.2 + beat * 0.42)
-            absolute = lane.start + int((1.0 - index / max(1, lane.length - 1)) * (lane.length - 1))
-            output[absolute] = scale(color, brightness)
+            brightness = clamp(0.24 + energy * sensitivity * 2.1 + beat * 0.44)
+            # At rest this is about one LED wide; on a beat it blooms to a
+            # visible handful of LEDs while the rest of the lane stays black.
+            radius = (0.007 + energy * 0.012) + beat * 0.042
+            for absolute in range(lane.start, lane.start + lane.length):
+                vertical = lane_distance_from_top(lane, absolute)
+                distance = abs(vertical - position)
+                glow = math.exp(-0.5 * (distance / max(0.004, radius)) ** 2)
+                if glow > 0.01:
+                    output[absolute] = scale(color, brightness * glow)
 
     return output
