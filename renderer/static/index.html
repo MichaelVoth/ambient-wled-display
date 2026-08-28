@@ -116,7 +116,8 @@
           <select id="musicRoute"><option value="">Finding speakers…</option></select>
           <label for="musicEffect">Light style</label>
           <select id="musicEffect">
-            <option value="pulse">Pulse — clearest beat test</option>
+            <option value="meter">Meter — black background, top-down volume</option>
+            <option value="pulse">Pulse — bass waves and bright sparks</option>
             <option value="prism">Prism — full-color flowing bands</option>
             <option value="spectrum">Spectrum — lows, mids, and highs</option>
             <option value="lava">Lava — swelling multicolor pools</option>
@@ -140,7 +141,7 @@
           <span><b>Beat <em id="musicBeatValue">0%</em></b><small>Detected kicks add a quick accent.</small><span class="bar"><i id="musicBeat"></i></span></span>
         </div>
         <div id="musicSignal" class="music-signal"><strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED</div>
-        <div id="musicGuide" class="music-signal"><strong>What to watch:</strong> on a kick, a single bright gold wave should travel across the darker strip.</div>
+        <div id="musicGuide" class="music-signal"><strong>What to watch:</strong> a simple color meter expands down from the top; everything below it stays black.</div>
         <div id="musicNotice" class="notice">The laptop helper connects automatically when you sign in.</div>
       </section>
       <section>
@@ -355,9 +356,10 @@
         document.querySelector('#startMusic').classList.toggle('active',!!music.enabled);
         document.querySelector('#musicToggle').classList.toggle('active',!!music.enabled);
         document.querySelector('#musicToggle').textContent=music.enabled?'Stop music lights':'Start music lights';
-        const activeEffect=music.effect||'pulse';
+        const activeEffect=music.effect||'meter';
         document.querySelector('#musicEffect').value=activeEffect;
         const musicGuides={
+          meter:'A simple color meter expands down from the top. Everything below it stays black.',
           pulse:'On a kick, a single bright gold wave should travel across the darker strip.',
           prism:'Each instrument range lights a bold color band; a beat briefly turns it warm white.',
           spectrum:'Bass, vocals, and high notes occupy visibly different parts of the strip.',

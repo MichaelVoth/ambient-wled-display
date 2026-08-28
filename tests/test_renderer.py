@@ -234,6 +234,15 @@ class RendererTests(unittest.TestCase):
         blended = render_music(base, device, 12.0, features, "lava", background_level=0.7)
         self.assertNotEqual(high_contrast, blended)
 
+    def test_music_meter_uses_true_black_negative_space(self):
+        device = self.device()
+        base = [(88, 80, 122)] * device.pixel_count
+        quiet = render_music(base, device, 0.0, {"energy": 0.0}, "meter")
+        active = render_music(base, device, 0.0, {"energy": 0.45}, "meter")
+        self.assertEqual(quiet, [(0, 0, 0)] * device.pixel_count)
+        self.assertGreater(sum(pixel != (0, 0, 0) for pixel in active), 0)
+        self.assertGreater(sum(pixel == (0, 0, 0) for pixel in active), 0)
+
     def test_integrated_music_keeps_renderer_ownership_and_reports_audio(self):
         with tempfile.TemporaryDirectory() as directory:
             config = RendererConfig(

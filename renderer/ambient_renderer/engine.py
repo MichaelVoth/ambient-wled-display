@@ -121,7 +121,7 @@ class RendererEngine:
         self.last_phase_key: tuple[int, str] | None = None
         self.music_companion_url = config.music_companion_url
         self.music_enabled = False
-        self.music_effect = "pulse"
+        self.music_effect = "meter"
         self.music_background = 0.42
         self.audio_features = {
             "bass": 0.0,

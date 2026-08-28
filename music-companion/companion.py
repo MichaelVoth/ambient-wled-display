@@ -32,7 +32,7 @@ class MusicCompanion:
         self.process: subprocess.Popen[bytes] | None = None
         self.capture_socket: socket.socket | None = None
         self.active_route: str | None = None
-        self.effect = "pulse"
+        self.effect = "meter"
         self.last_error: str | None = None
         self.last_frame_at = 0.0
         self.frames_sent = 0
@@ -82,6 +82,39 @@ class MusicCompanion:
             return False, "the speaker is not connected to this saved route"
         return True, None
 
+    def _repair_route(self, route: dict[str, Any]) -> tuple[bool, str | None]:
+        """Rebuild a stale Multi-Output Device using a currently connected speaker."""
+        try:
+            devices = self._devices()
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
+            return False, str(exc)
+        matches = tuple(str(value).lower() for value in route.get("speaker_matches", ()))
+        speaker = next(
+            (
+                device["name"] for device in devices
+                if device["name"] not in {route["device"], "BlackHole 2ch"}
+                and any(match in device["name"].lower() for match in matches)
+            ),
+            None,
+        )
+        if not speaker:
+            friendly = " or ".join(route.get("speaker_matches", ("speaker",)))
+            return False, f"connect {friendly} first, then try again"
+        try:
+            subprocess.run(
+                [self.config["audio_route_tool"], "repair", str(route["device"]), speaker],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+        except subprocess.CalledProcessError as exc:
+            return False, (exc.stderr or exc.stdout or "could not rebuild the speaker route").strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            return False, str(exc)
+        healthy, reason = self._route_health(route)
+        return healthy, reason
+
     def status(self) -> dict[str, Any]:
         try:
             available = {device["name"]: device for device in self._devices()}
@@ -116,9 +149,11 @@ class MusicCompanion:
         route = next((item for item in self.config["routes"] if item["id"] == route_id), None)
         if route is None:
             raise ValueError("unknown speaker route")
-        if effect not in {"pulse", "prism", "spectrum", "lava", "comets", "aurora"}:
+        if effect not in {"meter", "pulse", "prism", "spectrum", "lava", "comets", "aurora"}:
             raise ValueError("unknown music effect")
         healthy, reason = self._route_health(route)
+        if not healthy:
+            healthy, reason = self._repair_route(route)
         if not healthy:
             raise ValueError(f"{route['label']} is unavailable: {reason}")
         subprocess.run(
@@ -483,7 +518,7 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
             if self.path == "/api/start":
-                result = self.server.companion.start(str(body.get("route", "")), str(body.get("effect", "pulse")))
+                result = self.server.companion.start(str(body.get("route", "")), str(body.get("effect", "meter")))
             elif self.path == "/api/stop":
                 result = self.server.companion.stop()
             else:

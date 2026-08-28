@@ -134,7 +134,7 @@ class RendererHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "music": self.server.engine.update_audio(body)})
             elif path == "/api/music":
                 action = str(body.get("action", ""))
-                effect = str(body.get("effect", "pulse"))
+                effect = str(body.get("effect", "meter"))
                 background = body.get("background")
                 if action == "start":
                     route = str(body.get("route", "")).strip()

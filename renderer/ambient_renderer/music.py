@@ -9,7 +9,7 @@ from .config import DeviceConfig, LaneConfig
 from .effects import lane_distance_from_top
 
 
-MUSIC_EFFECTS = {"pulse", "prism", "spectrum", "lava", "comets", "aurora"}
+MUSIC_EFFECTS = {"meter", "pulse", "prism", "spectrum", "lava", "comets", "aurora"}
 
 MUSIC_PALETTE: tuple[RGB, ...] = (
     (255, 24, 10), (255, 118, 0), (58, 255, 28),
@@ -28,7 +28,7 @@ def render_music(
 ) -> list[RGB]:
     """Composite a vivid, continuously rendered music layer over the living base."""
     if effect not in MUSIC_EFFECTS:
-        effect = "pulse"
+        effect = "meter"
     bass = clamp(features.get("bass", 0.0))
     mid = clamp(features.get("mid", 0.0))
     treble = clamp(features.get("treble", 0.0))
@@ -40,6 +40,29 @@ def render_music(
     output = list(base)
 
     for lane_number, lane in enumerate(device.lanes if lanes is None else lanes):
+        if effect == "meter":
+            # Deliberately reserve negative space. The meter is a single,
+            # stationary top-down column: sound makes LEDs appear, silence is
+            # truly black. It is a reading of volume, not another animation.
+            level = clamp(max(energy * 1.12, bass * 0.82 + mid * 0.34 + treble * 0.18))
+            lit = max(0.0, level * lane.length)
+            for absolute in range(lane.start, lane.start + lane.length):
+                vertical = lane_distance_from_top(lane, absolute)
+                position = vertical * lane.length
+                if position >= lit:
+                    output[absolute] = (0, 0, 0)
+                    continue
+                # A retro level meter: green near the leading edge, moving
+                # through amber, then a hot magenta/red peak at the top.
+                ratio = position / max(1.0, lit)
+                color = (30, 255, 110)
+                if ratio < 0.34:
+                    color = (255, 46, 135)
+                elif ratio < 0.60:
+                    color = (255, 156, 16)
+                edge = clamp((lit - position) / 2.0)
+                output[absolute] = scale(color, 0.48 + edge * 0.52)
+            continue
         for absolute in range(lane.start, lane.start + lane.length):
             vertical = lane_distance_from_top(lane, absolute)
             # Music needs a darker stage than everyday ambient light so the

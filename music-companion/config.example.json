@@ -10,8 +10,8 @@
   "ledfx_app": "/Applications/LedFx-2.1.5.app",
   "ledfx_config_dir": "~/.ledfx",
   "routes": [
-    {"id": "airpods", "label": "AirPods + WLED", "device": "AirPods + WLED"},
-    {"id": "office", "label": "Office + WLED", "device": "Office + WLED"},
+    {"id": "airpods", "label": "AirPods + WLED", "device": "AirPods + WLED", "speaker_matches": ["AirPods"]},
+    {"id": "office", "label": "Office + WLED", "device": "Office + WLED", "speaker_matches": ["Office", "HomePod"]},
     {"id": "laptop", "label": "MacBook Speakers + WLED", "device": "MacBook Speakers + WLED"}
   ]
 }

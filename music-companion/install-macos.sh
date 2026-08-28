@@ -21,6 +21,11 @@ data["audio_route_tool"]=sys.argv[2]
 # path, avoids its virtual-device controller, and keeps audio capture local.
 if data.get("capture_backend", "ledfx") == "ledfx":
     data["capture_backend"]="ffmpeg"
+for route in data.get("routes", []):
+    if route.get("id") == "airpods":
+        route.setdefault("speaker_matches", ["AirPods"])
+    elif route.get("id") == "office":
+        route.setdefault("speaker_matches", ["Office", "HomePod"])
 path.write_text(json.dumps(data, indent=2)+"\n")
 PY
 
