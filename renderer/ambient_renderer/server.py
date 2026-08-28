@@ -155,8 +155,11 @@ class RendererHandler(BaseHTTPRequestHandler):
                 elif action == "effect":
                     music = self.server.engine.set_music(True, effect, background)
                     companion = {"available": True}
+                elif action == "repair":
+                    companion = self._companion("/api/repair", {})
+                    music = self.server.engine.music_status()
                 else:
-                    raise ValueError("music action must be start, stop, or effect")
+                    raise ValueError("music action must be start, stop, effect, or repair")
                 self._json({"ok": True, "music": music, "companion": companion})
             elif path == "/api/ambient":
                 self._json({"ok": True, "ambient": self.server.engine.set_ambient(body)})

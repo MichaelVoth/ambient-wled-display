@@ -133,6 +133,7 @@
         </div>
         <div class="row" style="margin-top:14px">
           <button id="musicToggle" class="music">Start music lights</button>
+          <button id="repairMusicRoutes">Repair saved speaker routes</button>
         </div>
         <div class="music-meter" aria-label="Live audio response">
           <span><b>Bass <em id="musicBassValue">0%</em></b><small>Low notes make large waves and heat.</small><span class="bar"><i id="musicBass"></i></span></span>
@@ -470,6 +471,16 @@
     document.querySelector('#resumeAmbient').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/mode',{mode:'renderer'}); },'Ambient lighting resumed.');
     document.querySelector('#startMusic').onclick=toggleMusic;
     document.querySelector('#musicToggle').onclick=toggleMusic;
+    document.querySelector('#repairMusicRoutes').onclick=async()=>{
+      const notice=document.querySelector('#musicNotice');
+      try {
+        const result=await api('/api/music',{action:'repair'});
+        const routes=result.companion?.routes||[];
+        const repaired=routes.filter(route=>route.available).map(route=>route.label);
+        notice.textContent=repaired.length?`Ready: ${repaired.join(' and ')}. Reload this page to choose it.`:'No saved speaker is connected yet. Wake or connect the AirPods/HomePod, then press this again.';
+        notice.className=repaired.length?'notice ok':'notice';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    };
     async function updateMusicLook() {
       if(!status?.music?.enabled) return;
       await api('/api/music',{action:'effect',effect:document.querySelector('#musicEffect').value,background:+document.querySelector('#musicBackground').value});

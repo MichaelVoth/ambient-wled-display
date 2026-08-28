@@ -173,6 +173,16 @@ class MusicCompanion:
             self.thread.start()
         return self.status()
 
+    def repair_routes(self) -> dict[str, Any]:
+        """Repair every stale saved route whose real speaker is available."""
+        results: list[dict[str, Any]] = []
+        for route in self.config["routes"]:
+            healthy, reason = self._route_health(route)
+            if not healthy:
+                healthy, reason = self._repair_route(route)
+            results.append({"id": route["id"], "label": route["label"], "available": healthy, "reason": reason})
+        return {"routes": results, "status": self.status()}
+
     def stop(self) -> dict[str, Any]:
         self.stop_event.set()
         with self.lock:
@@ -519,6 +529,8 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length).decode("utf-8")) if length else {}
             if self.path == "/api/start":
                 result = self.server.companion.start(str(body.get("route", "")), str(body.get("effect", "meter")))
+            elif self.path == "/api/repair":
+                result = self.server.companion.repair_routes()
             elif self.path == "/api/stop":
                 result = self.server.companion.stop()
             else:
