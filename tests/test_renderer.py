@@ -241,6 +241,36 @@ class RendererTests(unittest.TestCase):
         self.assertGreater(sum(pixel == (0, 0, 0) for pixel in active), 0)
         self.assertLessEqual(sum(pixel != (0, 0, 0) for pixel in active), round(device.pixel_count * 0.22) + 1)
 
+    def test_music_meter_custom_color_is_uniform_and_controllable(self):
+        device = self.device()
+        primary = (17, 231, 83)
+        frame = render_music(
+            [(90, 70, 110)] * device.pixel_count,
+            device,
+            42.0,
+            {"energy": 0.8, "beat": 0.0},
+            "meter",
+            sensitivity=0.3,
+            color_mode="custom",
+            primary=primary,
+            accent=(220, 30, 170),
+        )
+        lit = [pixel for pixel in frame if pixel != BLACK]
+        self.assertTrue(lit)
+        self.assertTrue(all(pixel[0] < pixel[1] and pixel[2] < pixel[1] for pixel in lit))
+        self.assertGreater(sum(pixel == BLACK for pixel in frame), len(frame) // 2)
+
+    def test_music_firefly_moves_continuously_without_lighting_a_background(self):
+        device = self.device()
+        features = {"energy": 0.55, "treble": 0.3, "phase": 1.25}
+        first = render_music([], device, 10.00, features, "firefly", motion_speed=1.0)
+        second = render_music([], device, 10.04, features, "firefly", motion_speed=1.0)
+        self.assertEqual(sum(pixel != BLACK for pixel in first), len(device.lanes))
+        self.assertEqual(sum(pixel != BLACK for pixel in second), len(device.lanes))
+        first_positions = [index for index, pixel in enumerate(first) if pixel != BLACK]
+        second_positions = [index for index, pixel in enumerate(second) if pixel != BLACK]
+        self.assertTrue(all(abs(after - before) <= 2 for before, after in zip(first_positions, second_positions)))
+
     def test_integrated_music_keeps_renderer_ownership_and_reports_audio(self):
         with tempfile.TemporaryDirectory() as directory:
             config = RendererConfig(

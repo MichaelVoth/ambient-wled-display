@@ -14,6 +14,8 @@ import subprocess
 import threading
 import time
 import urllib.request
+from collections import deque
+from urllib.parse import urlparse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,8 +29,10 @@ class MusicCompanion:
         self.config = config
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
+        self.feature_ready = threading.Condition(self.lock)
         self.shutdown_event = threading.Event()
         self.thread: threading.Thread | None = None
+        self.sender_thread: threading.Thread | None = None
         self.process: subprocess.Popen[bytes] | None = None
         self.capture_socket: socket.socket | None = None
         self.active_route: str | None = None
@@ -36,6 +40,10 @@ class MusicCompanion:
         self.last_error: str | None = None
         self.last_frame_at = 0.0
         self.frames_sent = 0
+        self.frames_analyzed = 0
+        self.pending_features: dict[str, float] | None = None
+        self.analysis_times: deque[float] = deque(maxlen=120)
+        self.send_times: deque[float] = deque(maxlen=120)
 
     def start_registration(self) -> None:
         threading.Thread(target=self._registration_loop, name="renderer-registration", daemon=True).start()
@@ -134,6 +142,9 @@ class MusicCompanion:
             })
         with self.lock:
             running = bool(self.thread and self.thread.is_alive())
+            now = time.monotonic()
+            analysis_fps = self._recent_rate(self.analysis_times, now)
+            feature_fps = self._recent_rate(self.send_times, now)
             return {
                 "available": device_error is None,
                 "running": running,
@@ -141,6 +152,9 @@ class MusicCompanion:
                 "effect": self.effect,
                 "receiving_audio": running and time.monotonic() - self.last_frame_at < 1.2,
                 "frames_sent": self.frames_sent,
+                "frames_analyzed": self.frames_analyzed,
+                "analysis_fps": analysis_fps,
+                "feature_fps": feature_fps,
                 "last_error": self.last_error or device_error,
                 "routes": routes,
             }
@@ -169,8 +183,15 @@ class MusicCompanion:
             self.effect = effect
             self.last_error = None
             self.stop_event.clear()
+            self.pending_features = None
+            self.analysis_times.clear()
+            self.send_times.clear()
+            self.sender_thread = threading.Thread(target=self._sender_loop, name="music-feature-sender", daemon=True)
             self.thread = threading.Thread(target=self._analyze, name="music-analysis", daemon=True)
-            self.thread.start()
+            sender_thread = self.sender_thread
+            analysis_thread = self.thread
+        sender_thread.start()
+        analysis_thread.start()
         return self.status()
 
     def repair_routes(self) -> dict[str, Any]:
@@ -185,9 +206,12 @@ class MusicCompanion:
 
     def stop(self) -> dict[str, Any]:
         self.stop_event.set()
+        with self.feature_ready:
+            self.feature_ready.notify_all()
         with self.lock:
             process = self.process
             thread = self.thread
+            sender_thread = self.sender_thread
         if process and process.poll() is None:
             process.terminate()
             try:
@@ -204,10 +228,14 @@ class MusicCompanion:
             capture_socket.close()
         if thread and thread is not threading.current_thread():
             thread.join(timeout=2)
+        if sender_thread and sender_thread is not threading.current_thread():
+            sender_thread.join(timeout=2)
         with self.lock:
             self.process = None
             self.capture_socket = None
             self.thread = None
+            self.sender_thread = None
+            self.pending_features = None
             self.active_route = None
         if self.config.get("capture_backend", "ledfx") == "ledfx":
             try:
@@ -218,6 +246,56 @@ class MusicCompanion:
             except OSError:
                 pass
         return self.status()
+
+    @staticmethod
+    def _recent_rate(times: deque[float], now: float) -> float:
+        recent = [value for value in times if now - value <= 2.0]
+        if len(recent) < 2:
+            return 0.0
+        return round((len(recent) - 1) / max(0.001, recent[-1] - recent[0]), 1)
+
+    def _queue_features(self, features: dict[str, float]) -> None:
+        now = time.monotonic()
+        with self.feature_ready:
+            self.pending_features = features
+            self.frames_analyzed += 1
+            self.analysis_times.append(now)
+            self.feature_ready.notify()
+
+    def _sender_loop(self) -> None:
+        parsed = urlparse(self.config["renderer_url"])
+        try:
+            destination = (socket.gethostbyname(parsed.hostname or "raspberrypi.local"), int(self.config.get("audio_udp_port", 8092)))
+        except OSError:
+            with self.lock:
+                self.last_error = "Could not resolve the house renderer"
+            return
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as feature_socket:
+            while not self.stop_event.is_set():
+                with self.feature_ready:
+                    self.feature_ready.wait_for(
+                        lambda: self.pending_features is not None or self.stop_event.is_set(),
+                        timeout=0.25,
+                    )
+                    if self.stop_event.is_set():
+                        break
+                    payload = self.pending_features
+                    self.pending_features = None
+                if payload is None:
+                    continue
+                with self.lock:
+                    payload = {**payload, "source_fps": self._recent_rate(self.analysis_times, time.monotonic())}
+                try:
+                    feature_socket.sendto(json.dumps(payload, separators=(",", ":")).encode("utf-8"), destination)
+                    now = time.monotonic()
+                    with self.lock:
+                        self.last_error = None
+                        self.last_frame_at = now
+                        self.frames_sent += 1
+                        self.send_times.append(now)
+                except OSError:
+                    with self.lock:
+                        self.last_error = "Waiting for the house renderer to reconnect"
 
     def _post_features(self, features: dict[str, float]) -> bool:
         request = urllib.request.Request(
@@ -247,14 +325,20 @@ class MusicCompanion:
 
     def _analyze_ffmpeg(self) -> None:
         sample_rate = 44100
-        block_size = 1470
+        # Smaller windows keep CoreAudio/ffmpeg packet batching from reducing
+        # the feature stream to roughly 10 FPS. 384 samples is ~8.7 ms and
+        # still provides enough frequency resolution for three broad bands.
+        block_size = 384
+        frame_seconds = block_size / sample_rate
         command = [
             self.config["ffmpeg"], "-hide_banner", "-loglevel", "error",
             "-f", "avfoundation", "-i", f":{self.config['audio_input']}",
             "-ac", "1", "-ar", str(sample_rate), "-f", "f32le", "pipe:1",
         ]
         smoothed = {"bass": 0.0, "mid": 0.0, "treble": 0.0, "energy": 0.0, "beat": 0.0}
-        bass_floor = 0.08
+        bass_fast = 0.0
+        bass_slow = 0.0
+        last_beat_at = 0.0
         phase = 0.0
         try:
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -274,28 +358,44 @@ class MusicCompanion:
                     break
                 samples = np.frombuffer(raw, dtype=np.float32)
                 rms = float(np.sqrt(np.mean(samples * samples)))
-                energy = min(1.0, math.log1p(rms * 35.0) / math.log(8.0))
+                # Use a useful musical dynamic range instead of mapping normal
+                # mastered audio straight to 100%. -42 dB is effectively dark;
+                # only a near-full-scale signal approaches 1.0.
+                rms_db = 20.0 * math.log10(max(rms, 1e-7))
+                loudness = max(0.0, min(1.0, (rms_db + 42.0) / 36.0))
+                loudness = loudness * loudness * (3.0 - 2.0 * loudness)
+                energy = loudness ** 2.2
                 spectrum = np.abs(np.fft.rfft(samples * window))
                 total = float(np.sum(spectrum)) + 1e-9
-                values = {
-                    name: min(1.0, energy * float(np.sum(spectrum[mask]) / total) * multiplier)
-                    for (name, mask), multiplier in zip(masks.items(), (5.0, 2.6, 4.2))
+                shares = {
+                    name: float(np.sum(spectrum[mask]) / total)
+                    for name, mask in masks.items()
                 }
-                bass_floor = bass_floor * 0.985 + values["bass"] * 0.015
-                beat = 1.0 if energy > 0.025 and values["bass"] > max(0.025, bass_floor * 1.18) else 0.0
+                values = {
+                    "bass": min(1.0, math.sqrt(shares["bass"]) * energy * 1.65),
+                    "mid": min(1.0, math.sqrt(shares["mid"]) * energy * 0.95),
+                    "treble": min(1.0, math.sqrt(shares["treble"]) * energy * 1.15),
+                }
+                # A beat is a short bass onset relative to its own recent
+                # baseline, with a refractory window to prevent double hits.
+                bass_fast += (values["bass"] - bass_fast) * (1.0 - math.exp(-frame_seconds / 0.035))
+                bass_slow += (values["bass"] - bass_slow) * (1.0 - math.exp(-frame_seconds / 0.6))
+                onset = max(0.0, bass_fast - bass_slow)
+                now = time.monotonic()
+                beat = 1.0 if energy > 0.08 and onset > 0.07 and now - last_beat_at > 0.17 else 0.0
+                if beat:
+                    last_beat_at = now
                 values.update({"energy": energy, "beat": beat})
                 for name, value in values.items():
                     if name == "beat":
                         continue
-                    rate = 0.58 if value > smoothed[name] else 0.16
+                    time_constant = 0.045 if value > smoothed[name] else 0.18
+                    rate = 1.0 - math.exp(-frame_seconds / time_constant)
                     smoothed[name] += (value - smoothed[name]) * rate
-                smoothed["beat"] = max(beat, smoothed["beat"] * 0.72)
-                phase += 0.015 + smoothed["bass"] * 0.22 + smoothed["energy"] * 0.28
+                smoothed["beat"] = max(beat, smoothed["beat"] * math.exp(-frame_seconds / 0.1))
+                phase += (0.35 + smoothed["energy"] * 1.4) * frame_seconds
                 payload = {**smoothed, "phase": phase}
-                if self._post_features(payload):
-                    with self.lock:
-                        self.last_frame_at = time.monotonic()
-                        self.frames_sent += 1
+                self._queue_features(payload)
             if process.poll() not in {None, 0, -15} and not self.stop_event.is_set():
                 assert process.stderr is not None
                 raise RuntimeError(process.stderr.read().decode("utf-8", errors="replace").strip())
@@ -490,10 +590,7 @@ class MusicCompanion:
                     smoothed[name] += (value - smoothed[name]) * rate
                 smoothed["beat"] = max(raw_beat, smoothed["beat"] * 0.72)
                 phase += 0.015 + smoothed["bass"] * 0.22 + smoothed["energy"] * 0.28
-                if self._post_features({**smoothed, "phase": phase}):
-                    with self.lock:
-                        self.last_frame_at = now
-                        self.frames_sent += 1
+                self._queue_features({**smoothed, "phase": phase})
                 last_sent = now
         except Exception as exc:
             if not self.stop_event.is_set():

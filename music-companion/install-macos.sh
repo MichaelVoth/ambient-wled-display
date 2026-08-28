@@ -17,6 +17,7 @@ import json, pathlib, sys
 path=pathlib.Path(sys.argv[1])
 data=json.loads(path.read_text())
 data["audio_route_tool"]=sys.argv[2]
+data.setdefault("audio_udp_port", 8092)
 # Directly analyze the BlackHole audio copy. This removes LedFx from the live
 # path, avoids its virtual-device controller, and keeps audio capture local.
 if data.get("capture_backend", "ledfx") == "ledfx":

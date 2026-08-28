@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -27,6 +29,30 @@ class RendererHTTPServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], engine: RendererEngine) -> None:
         super().__init__(address, RendererHandler)
         self.engine = engine
+        self.audio_stop = threading.Event()
+        self.audio_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.audio_socket.settimeout(0.5)
+        self.audio_socket.bind((address[0], address[1] + 2))
+        self.audio_thread = threading.Thread(target=self._receive_audio, name="music-feature-udp", daemon=True)
+        self.audio_thread.start()
+
+    def _receive_audio(self) -> None:
+        while not self.audio_stop.is_set():
+            try:
+                payload, _source = self.audio_socket.recvfrom(4096)
+                value = json.loads(payload.decode("utf-8"))
+                if isinstance(value, dict):
+                    self.engine.update_audio(value)
+            except socket.timeout:
+                continue
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
+                LOGGER.debug("discarded invalid UDP audio feature packet", exc_info=True)
+
+    def server_close(self) -> None:
+        self.audio_stop.set()
+        self.audio_socket.close()
+        self.audio_thread.join(timeout=1)
+        super().server_close()
 
 
 class RendererHandler(BaseHTTPRequestHandler):
@@ -45,6 +71,13 @@ class RendererHandler(BaseHTTPRequestHandler):
             self._json(self.server.engine.status())
         elif path == "/api/frame":
             self._json({"frames": self.server.engine.frame_snapshot()})
+        elif path == "/api/audio":
+            self._json(self.server.engine.music_status())
+        elif path == "/api/live":
+            self._json({
+                "music": self.server.engine.music_status(),
+                "frames": self.server.engine.frame_snapshot(),
+            })
         elif path == "/api/config":
             status = self.server.engine.status()
             self._json({
@@ -137,6 +170,10 @@ class RendererHandler(BaseHTTPRequestHandler):
                 effect = str(body.get("effect", "meter"))
                 background = body.get("background")
                 sensitivity = body.get("sensitivity")
+                color_mode = body.get("color_mode")
+                primary = parse_hex(str(body["primary"])) if "primary" in body else None
+                accent = parse_hex(str(body["accent"])) if "accent" in body else None
+                motion_speed = body.get("motion_speed")
                 if action == "start":
                     route = str(body.get("route", "")).strip()
                     if not route:
@@ -145,7 +182,9 @@ class RendererHandler(BaseHTTPRequestHandler):
                         "/api/start",
                         {"route": route, "effect": effect},
                     )
-                    music = self.server.engine.set_music(True, effect, background, sensitivity)
+                    music = self.server.engine.set_music(
+                        True, effect, background, sensitivity, color_mode, primary, accent, motion_speed
+                    )
                 elif action == "stop":
                     self.server.engine.set_music(False, effect)
                     try:
@@ -154,7 +193,9 @@ class RendererHandler(BaseHTTPRequestHandler):
                         companion = {"available": False, "error": str(exc)}
                     music = self.server.engine.music_status()
                 elif action == "effect":
-                    music = self.server.engine.set_music(True, effect, background, sensitivity)
+                    music = self.server.engine.set_music(
+                        True, effect, background, sensitivity, color_mode, primary, accent, motion_speed
+                    )
                     companion = {"available": True}
                 elif action == "repair":
                     companion = self._companion("/api/repair", {})

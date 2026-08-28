@@ -124,6 +124,10 @@ class RendererEngine:
         self.music_effect = "meter"
         self.music_background = 0.42
         self.music_sensitivity = 0.22
+        self.music_color_mode = "cycle"
+        self.music_primary = (0, 190, 255)
+        self.music_accent = (255, 32, 170)
+        self.music_motion_speed = 0.75
         self.audio_features = {
             "bass": 0.0,
             "mid": 0.0,
@@ -131,6 +135,7 @@ class RendererEngine:
             "energy": 0.0,
             "beat": 0.0,
             "phase": 0.0,
+            "source_fps": 0.0,
         }
         self.audio_updated_at = 0.0
 
@@ -187,6 +192,10 @@ class RendererEngine:
         effect: str | None = None,
         background: float | None = None,
         sensitivity: float | None = None,
+        color_mode: str | None = None,
+        primary: RGB | None = None,
+        accent: RGB | None = None,
+        motion_speed: float | None = None,
     ) -> dict[str, Any]:
         if effect is not None and effect not in MUSIC_EFFECTS:
             raise ValueError(f"music effect must be one of: {', '.join(sorted(MUSIC_EFFECTS))}")
@@ -194,6 +203,10 @@ class RendererEngine:
             raise ValueError("music background must be between 0.15 and 1.0")
         if sensitivity is not None and not 0.05 <= float(sensitivity) <= 1.0:
             raise ValueError("music sensitivity must be between 0.05 and 1.0")
+        if color_mode is not None and color_mode not in {"cycle", "custom"}:
+            raise ValueError("music color mode must be cycle or custom")
+        if motion_speed is not None and not 0.1 <= float(motion_speed) <= 3.0:
+            raise ValueError("music motion speed must be between 0.1 and 3.0")
         if enabled:
             self._validate_outputs()
         with self.lock:
@@ -203,6 +216,14 @@ class RendererEngine:
                 self.music_background = float(background)
             if sensitivity is not None:
                 self.music_sensitivity = float(sensitivity)
+            if color_mode is not None:
+                self.music_color_mode = color_mode
+            if primary is not None:
+                self.music_primary = primary
+            if accent is not None:
+                self.music_accent = accent
+            if motion_speed is not None:
+                self.music_motion_speed = float(motion_speed)
             self.music_enabled = bool(enabled)
             if enabled:
                 self.mode = "renderer"
@@ -217,7 +238,7 @@ class RendererEngine:
         return self.music_status()
 
     def update_audio(self, changes: dict[str, Any]) -> dict[str, Any]:
-        allowed = {"bass", "mid", "treble", "energy", "beat", "phase"}
+        allowed = {"bass", "mid", "treble", "energy", "beat", "phase", "source_fps"}
         unknown = set(changes) - allowed
         if unknown:
             raise ValueError("unknown audio features: " + ", ".join(sorted(unknown)))
@@ -226,7 +247,7 @@ class RendererEngine:
                 if name not in changes:
                     continue
                 value = float(changes[name])
-                if name == "phase":
+                if name in {"phase", "source_fps"}:
                     self.audio_features[name] = value
                 else:
                     self.audio_features[name] = max(0.0, min(1.0, value))
@@ -242,6 +263,10 @@ class RendererEngine:
                 "effect": self.music_effect,
                 "background": self.music_background,
                 "sensitivity": self.music_sensitivity,
+                "color_mode": self.music_color_mode,
+                "primary": self.music_primary,
+                "accent": self.music_accent,
+                "motion_speed": self.music_motion_speed,
                 "receiving_audio": bool(
                     self.music_enabled and age is not None and age < 1.2
                 ),
@@ -441,6 +466,10 @@ class RendererEngine:
             music_effect = self.music_effect
             music_background = self.music_background
             music_sensitivity = self.music_sensitivity
+            music_color_mode = self.music_color_mode
+            music_primary = self.music_primary
+            music_accent = self.music_accent
+            music_motion_speed = self.music_motion_speed
             audio_features = dict(self.audio_features)
             audio_age = now - self.audio_updated_at if self.audio_updated_at else float("inf")
 
@@ -500,6 +529,10 @@ class RendererEngine:
                     frame, device, now, audio_features, music_effect,
                     background_level=music_background,
                     sensitivity=music_sensitivity,
+                    color_mode=music_color_mode,
+                    primary=music_primary,
+                    accent=music_accent,
+                    motion_speed=music_motion_speed,
                 )
             if isinstance(event, HourEvent):
                 target_lanes = self._target_lanes(device, event.targets)

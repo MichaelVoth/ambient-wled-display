@@ -41,7 +41,7 @@
     .music-meter b { display:flex; justify-content:space-between; gap:4px; font-size:11px; }
     .music-meter em { color:var(--muted); font-style:normal; font-weight:500; }
     .music-meter small { color:var(--muted); display:block; min-height:31px; font-size:10px; line-height:1.25; margin:3px 0 5px; }
-    .music-meter i { display:block; height:100%; width:0; transition:width 90ms linear; }
+    .music-meter i { display:block; height:100%; width:0; transition:width 32ms linear; }
     .music-meter .bar { display:block; height:7px; border-radius:99px; background:#252b3d; overflow:hidden; padding:0; }
     .music-meter span:nth-child(1) i { background:#ff431c; }
     .music-meter span:nth-child(2) i { background:#ff2fe0; }
@@ -69,6 +69,7 @@
     .control-grid { display:grid; grid-template-columns:1fr auto; gap:8px 12px; align-items:center; }
     .control-grid label { margin:6px 0; }
     .control-grid input[type="range"] { width:180px; padding:0; }
+    .control-grid input[type="color"] { width:72px; height:38px; padding:3px; cursor:pointer; }
     .colors { display:flex; gap:8px; flex-wrap:wrap; }
     .colors input[type="color"] { width:48px; height:42px; padding:3px; cursor:pointer; }
     output { min-width:52px; color:#d8e5f5; text-align:right; }
@@ -98,13 +99,16 @@
           <button id="startMusic">Dance to music</button>
           <button id="quietNow">Quiet / stop output</button>
         </div>
-        <label>How should the house express itself?</label>
-        <div class="row">
-          <button data-everyday-signal="welcome" class="welcome">Welcome home</button>
-          <button data-everyday-signal="comfort" class="comfort">Comfort</button>
-          <button data-everyday-signal="curious" class="curious">Curious</button>
-          <button data-everyday-signal="goodbye" class="goodbye">Goodbye</button>
-        </div>
+        <details style="margin-top:14px">
+          <summary>Play a one-time scene</summary>
+          <p style="color:var(--muted)">These briefly interrupt the normal light, play one clearly visible animation, then return to the previous display.</p>
+          <div class="row">
+            <button data-everyday-signal="welcome" class="welcome">Warm arrival sweep</button>
+            <button data-everyday-signal="comfort" class="comfort">Slow comfort glow</button>
+            <button data-everyday-signal="curious" class="curious">Cool color exploration</button>
+            <button data-everyday-signal="goodbye" class="goodbye">Fade out for leaving</button>
+          </div>
+        </details>
         <div id="everydayNotice" class="notice">The house is currently following its environment.</div>
         <div class="metric"><small>Right now</small><span id="everydayState">Connecting to the house…</span></div>
       </section>
@@ -122,6 +126,17 @@
           </select>
           <label for="musicSensitivity">Sensitivity / maximum reach <output id="musicSensitivityLabel">22% · about 30 LEDs</output></label>
           <input id="musicSensitivity" type="range" min="0.05" max="1" step="0.01" value="0.22">
+          <label for="musicMotionSpeed">Motion speed <output id="musicMotionSpeedLabel">0.75×</output></label>
+          <input id="musicMotionSpeed" type="range" min="0.1" max="3" step="0.05" value="0.75">
+          <label for="musicColorMode">Colors</label>
+          <select id="musicColorMode">
+            <option value="cycle">Cycle through the full color wheel</option>
+            <option value="custom">Use my two colors</option>
+          </select>
+          <label for="musicPrimary">Primary color</label>
+          <input id="musicPrimary" type="color" value="#00beff">
+          <label for="musicAccent">Beat / accent color</label>
+          <input id="musicAccent" type="color" value="#ff20aa">
         </div>
         <div class="row" style="margin-top:14px">
           <button id="musicToggle" class="music">Start music lights</button>
@@ -133,7 +148,7 @@
           <span><b>Highs <em id="musicTrebleValue">0%</em></b><small>Hi-hats and detail make tips and sparks.</small><span class="bar"><i id="musicTreble"></i></span></span>
           <span><b>Beat <em id="musicBeatValue">0%</em></b><small>Detected kicks add a quick accent.</small><span class="bar"><i id="musicBeat"></i></span></span>
         </div>
-        <div id="musicSignal" class="music-signal"><strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED</div>
+        <div id="musicSignal" class="music-signal"><strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED · measuring…</div>
         <div id="musicGuide" class="music-signal"><strong>What to watch:</strong> a simple color meter expands down from the top; everything below it stays black.</div>
         <div id="musicNotice" class="notice">The laptop helper connects automatically when you sign in.</div>
       </section>
@@ -331,6 +346,79 @@
       document.querySelector('#manualStudio').open=ambient.mode==='manual';
       updateAmbientLabels(); ambientInitialized=true;
     }
+    function rgbHex(value,fallback) {
+      if(!Array.isArray(value)||value.length!==3) return fallback;
+      return `#${value.map(channel=>Math.max(0,Math.min(255,channel)).toString(16).padStart(2,'0')).join('')}`;
+    }
+    function musicSettings() {
+      return {
+        effect:document.querySelector('#musicEffect').value,
+        sensitivity:+document.querySelector('#musicSensitivity').value,
+        motion_speed:+document.querySelector('#musicMotionSpeed').value,
+        color_mode:document.querySelector('#musicColorMode').value,
+        primary:document.querySelector('#musicPrimary').value,
+        accent:document.querySelector('#musicAccent').value
+      };
+    }
+    function updateMusicControls(music) {
+      const activeEffect=music.effect||'meter';
+      document.querySelector('#musicEffect').value=activeEffect;
+      const guides={
+        meter:'One smoothly changing color grows down from the top with volume. The rest is fully black.',
+        chunks:'A few unequal soft islands drift continuously. Volume controls brightness; beats briefly strengthen them.',
+        firefly:'One LED travels continuously up and down. Music changes its pace, brightness, and color.'
+      };
+      document.querySelector('#musicGuide').innerHTML=`<strong>What to watch:</strong> ${guides[activeEffect]||guides.meter}`;
+      const sensitivity=music.sensitivity??0.22;
+      if(document.activeElement!==document.querySelector('#musicSensitivity')) document.querySelector('#musicSensitivity').value=sensitivity;
+      document.querySelector('#musicSensitivityLabel').textContent=`${Math.round(sensitivity*100)}% · about ${Math.round(sensitivity*139)} LEDs`;
+      const motion=music.motion_speed??0.75;
+      if(document.activeElement!==document.querySelector('#musicMotionSpeed')) document.querySelector('#musicMotionSpeed').value=motion;
+      document.querySelector('#musicMotionSpeedLabel').textContent=`${Number(motion).toFixed(2)}×`;
+      document.querySelector('#musicColorMode').value=music.color_mode||'cycle';
+      if(document.activeElement!==document.querySelector('#musicPrimary')) document.querySelector('#musicPrimary').value=rgbHex(music.primary,'#00beff');
+      if(document.activeElement!==document.querySelector('#musicAccent')) document.querySelector('#musicAccent').value=rgbHex(music.accent,'#ff20aa');
+      const custom=(music.color_mode||'cycle')==='custom';
+      document.querySelector('#musicPrimary').disabled=!custom;
+      document.querySelector('#musicAccent').disabled=!custom;
+    }
+    function renderAudio(music) {
+      for(const [name,id] of [['bass','musicBass'],['mid','musicMid'],['treble','musicTreble'],['beat','musicBeat']]) {
+        const percent=Math.round((music.features?.[name]||0)*100);
+        document.querySelector(`#${id}`).style.width=`${percent}%`;
+        document.querySelector(`#${id}Value`).textContent=`${percent}%`;
+      }
+      const notice=document.querySelector('#musicNotice');
+      const signal=Math.max(music.features?.bass||0,music.features?.mid||0,music.features?.treble||0,music.features?.energy||0);
+      const sourceFps=Math.round(music.features?.source_fps||0);
+      const path=document.querySelector('#musicSignal');
+      if(music.enabled&&music.receiving_audio&&signal>0.015) {
+        notice.textContent='Audio is live. The values below are the signals currently driving the selected effect.';
+        path.innerHTML=`<strong>Live path:</strong> analyzer ${sourceFps||'—'} FPS → Pi ${status?.fps_recent||'—'} FPS → WLED ${status?.receiver_status?.[status?.devices?.[0]?.id]?.fps||'—'} FPS`;
+        notice.className='notice ok';
+      } else if(music.enabled&&music.receiving_audio) {
+        notice.textContent='The audio path is connected and currently hearing silence.';
+        path.innerHTML=`<strong>Live path:</strong> analyzer ${sourceFps||'—'} FPS → Pi ${status?.fps_recent||'—'} FPS → WLED ${status?.receiver_status?.[status?.devices?.[0]?.id]?.fps||'—'} FPS`;
+        notice.className='notice';
+      } else if(music.enabled) {
+        notice.textContent='Music mode is waiting for the laptop audio analyzer.';
+        path.innerHTML='<strong>Live path:</strong> reconnecting the laptop analyzer…';
+        notice.className='notice';
+      }
+    }
+    let livePollBusy=false;
+    async function refreshLive() {
+      if(livePollBusy) return;
+      livePollBusy=true;
+      try {
+        const live=await api('/api/live');
+        if(status) status.music=live.music;
+        updateMusicControls(live.music);
+        renderAudio(live.music);
+        draw(live.frames);
+      } catch(error) { /* The slower health refresh reports persistent errors. */ }
+      finally { livePollBusy=false; }
+    }
     async function refresh() {
       try {
         const [nextStatus,frame]=await Promise.all([api('/api/status'),api('/api/frame')]); status=nextStatus;
@@ -349,40 +437,8 @@
         document.querySelector('#startMusic').classList.toggle('active',!!music.enabled);
         document.querySelector('#musicToggle').classList.toggle('active',!!music.enabled);
         document.querySelector('#musicToggle').textContent=music.enabled?'Stop music lights':'Start music lights';
-        const activeEffect=music.effect||'meter';
-        document.querySelector('#musicEffect').value=activeEffect;
-        const musicGuides={
-          meter:'A simple color meter expands down from the top. Everything below it stays black.',
-          chunks:'A small number of uneven color islands appear and disappear with volume and beats.',
-          firefly:'One LED travels up and down the black strip, accelerating and flashing on beats.'
-        };
-        document.querySelector('#musicGuide').innerHTML=`<strong>What to watch:</strong> ${musicGuides[activeEffect]||musicGuides.meter}`;
-        const sensitivity=music.sensitivity??0.22;
-        document.querySelector('#musicSensitivity').value=sensitivity;
-        document.querySelector('#musicSensitivityLabel').textContent=`${Math.round(sensitivity*100)}% · about ${Math.round(sensitivity*139)} LEDs`;
-        for(const [name,id] of [['bass','musicBass'],['mid','musicMid'],['treble','musicTreble'],['beat','musicBeat']]) {
-          const percent=Math.round((music.features?.[name]||0)*100);
-          document.querySelector(`#${id}`).style.width=`${percent}%`;
-          document.querySelector(`#${id}Value`).textContent=`${percent}%`;
-        }
-        const musicNotice=document.querySelector('#musicNotice');
-        const signal=Math.max(music.features?.bass||0,music.features?.mid||0,music.features?.treble||0,music.features?.energy||0);
-        const musicSignal=document.querySelector('#musicSignal');
-        if(music.enabled) {
-          if(music.receiving_audio&&signal>0.015) {
-            musicNotice.textContent='Hearing sound now. The meter values are driving the effect.';
-            musicSignal.innerHTML='<strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED · sound detected';
-            musicNotice.className='notice ok';
-          } else if(music.receiving_audio) {
-            musicNotice.textContent='The audio path is connected, but it is hearing silence right now. Start music and watch the values rise.';
-            musicSignal.innerHTML='<strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED · connected, waiting for sound';
-            musicNotice.className='notice';
-          } else {
-            musicNotice.textContent='Music lights are on; waiting for the laptop audio analyzer.';
-            musicSignal.innerHTML='<strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED · reconnecting';
-            musicNotice.className='notice';
-          }
-        }
+        updateMusicControls(music);
+        renderAudio(music);
         document.querySelector('#quietNow').classList.toggle('active',status.mode==='off');
         const modeLabel=music.enabled?(music.receiving_audio?'Dancing to the music':'Music mode · waiting for audio'):{renderer:'Ambient renderer',preview:'Simulator only',music:'Legacy music controller',off:'Output quiet'}[status.mode]||status.mode;
         document.querySelector('#everydayState').textContent=status.active_event?`${modeLabel} · ${status.active_event.kind} (${status.active_event.phase})`:modeLabel;
@@ -428,7 +484,7 @@
         const option=document.createElement('option'); option.value=name;
         option.textContent=name.charAt(0).toUpperCase()+name.slice(1); preset.appendChild(option);
       }
-      await refresh(); setInterval(refresh,200);
+      await refresh(); setInterval(refresh,1000); setInterval(refreshLive,33);
     }
     document.querySelector('#setMode').onclick=()=>action(()=>api('/api/mode',{mode:document.querySelector('#mode').value}),'Output mode updated.');
     async function everyday(work, success) {
@@ -447,7 +503,7 @@
           const route=document.querySelector('#musicRoute').value;
           if(!route) throw new Error('The laptop helper is offline or no speaker route is available.');
           notice.textContent='Connecting the speaker, audio capture, and lights…'; notice.className='notice';
-          await api('/api/music',{action:'start',route,effect:document.querySelector('#musicEffect').value,sensitivity:+document.querySelector('#musicSensitivity').value});
+          await api('/api/music',{action:'start',route,...musicSettings()});
           notice.textContent='Music lights are on. Press play in any music app.';
         }
         notice.className='notice ok'; await refresh();
@@ -473,10 +529,26 @@
     };
     async function updateMusicLook() {
       if(!status?.music?.enabled) return;
-      await api('/api/music',{action:'effect',effect:document.querySelector('#musicEffect').value,sensitivity:+document.querySelector('#musicSensitivity').value});
+      await api('/api/music',{action:'effect',...musicSettings()});
     }
     document.querySelector('#musicEffect').onchange=updateMusicLook;
+    document.querySelector('#musicSensitivity').oninput=()=>{
+      const value=+document.querySelector('#musicSensitivity').value;
+      document.querySelector('#musicSensitivityLabel').textContent=`${Math.round(value*100)}% · about ${Math.round(value*139)} LEDs`;
+    };
     document.querySelector('#musicSensitivity').onchange=updateMusicLook;
+    document.querySelector('#musicMotionSpeed').oninput=()=>{
+      document.querySelector('#musicMotionSpeedLabel').textContent=`${Number(document.querySelector('#musicMotionSpeed').value).toFixed(2)}×`;
+    };
+    document.querySelector('#musicMotionSpeed').onchange=updateMusicLook;
+    document.querySelector('#musicColorMode').onchange=async()=>{
+      const custom=document.querySelector('#musicColorMode').value==='custom';
+      document.querySelector('#musicPrimary').disabled=!custom;
+      document.querySelector('#musicAccent').disabled=!custom;
+      await updateMusicLook();
+    };
+    document.querySelector('#musicPrimary').onchange=updateMusicLook;
+    document.querySelector('#musicAccent').onchange=updateMusicLook;
     document.querySelector('#quietNow').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/mode',{mode:'off'}); },'Renderer output stopped.');
     for(const button of document.querySelectorAll('[data-everyday-signal]')) button.onclick=()=>everyday(()=>api('/api/events/signal',{signal:button.dataset.everydaySignal,take_output:true}),`${button.textContent} animation started.`);
     document.querySelector('#previewHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:false}),'Preview started.');
@@ -485,7 +557,7 @@
     document.querySelector('#alert').onclick=()=>action(()=>api('/api/events/alert',{color:'#ff351f',duration:6}),'Urgent alert started.');
     for(const button of document.querySelectorAll('[data-signal]')) button.onclick=()=>action(()=>api('/api/events/signal',{signal:button.dataset.signal,take_output:true}),`${button.textContent} started.`);
     for(const button of document.querySelectorAll('[data-layer]')) button.onclick=()=>action(()=>api(`/api/layers/${button.dataset.layer}`,{enabled:!status.layers[button.dataset.layer]}),`${button.dataset.layer} layer updated.`);
-    for(const slider of document.querySelectorAll('.control-grid input')) slider.oninput=updateAmbientLabels;
+    for(const slider of document.querySelectorAll('#manualStudio input[type="range"]')) slider.oninput=updateAmbientLabels;
     document.querySelector('#ambientExpression').onchange=async()=>{
       if(status?.ambient?.mode!=='adaptive') return;
       const notice=document.querySelector('#ambientNotice');
