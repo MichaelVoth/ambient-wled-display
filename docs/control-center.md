@@ -12,24 +12,20 @@ physical output is enabled.
 
 ## Arrange your dashboard
 
-Use **Control columns** to choose Auto, two, three, or four control columns.
-The dashboard reduces the count on smaller screens so controls stay usable.
-Cards stack independently; a tall card does not create empty rows next to it.
+Drag the small dotted square at the top right of any section to move it.
+The highlighted space shows where it will land. There is no edit mode,
+column selector, or layout toolbar. The strip preview moves the same way.
 
-Select **Arrange cards**, then drag a card using its **Drag** handle. The
-highlighted space shows where it will land. Alternatively, use **Move to…**
-and the up/down arrows; these also work with touch or a keyboard. Select
-**Done arranging** to hide the movement controls. Escape cancels a drag.
+Cards fit their content and automatically share the available width across
+one to four columns. Each column stacks independently, without empty rows
+caused by taller neighboring cards. Phone screens use one column and a
+shorter strip preview. Existing control values are preserved when moving.
 
-The **− / +** button collapses or expands each card. **Pin strip preview**
-keeps the live strip in its own sticky left-hand dock on desktop; uncheck it
-to move the preview like any other card. On phones the preview is shorter
-and scrolls normally.
-
-Positions and collapsed cards save automatically in this browser, separately
-for different column counts and pinned/unpinned layouts. Your phone can have
-a different arrangement from your laptop. **Reset layout** restores the
-default arrangement. None of these layout controls changes the lights.
+Positions save automatically in this browser for each screen-width layout.
+Your phone can have a different arrangement from your laptop. Keyboard users
+can focus a corner grip and use the arrow keys to move the card up/down or
+between columns. Escape cancels an in-progress drag. Moving cards never
+changes the lights.
 
 ## Light power and overall brightness
 
@@ -100,8 +96,7 @@ Between explicit events, wind bends the color field into visible gusts and the
 base may produce sparse, independently timed glimmers. These are intentionally
 subtle and yield to rain, the hourly clock, music, and alerts.
 
-On wider screens the exact physical-lane simulator is pinned in the left
-dock by default, beside the rearrangeable control columns.
+The exact physical-lane simulator is a movable card beside the controls.
 
 The control center also provides a **manual** mode with:
 

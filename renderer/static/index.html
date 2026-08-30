@@ -81,62 +81,45 @@
       .simulator { grid-column:1; grid-row:2; position:relative; top:auto; max-height:none; }
     }
     /* Independent card stacks avoid the empty rows of a conventional grid. */
-    .layout-toolbar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:12px 20px; border-bottom:1px solid var(--line); background:#10151e; }
-    .layout-toolbar label { display:flex; align-items:center; gap:8px; margin:0; font-size:13px; }
-    .layout-toolbar select { max-width:140px; }
-    .layout-toolbar input[type=checkbox] { accent-color:#55d8e8; width:17px; height:17px; }
-    #layoutNotice { font-size:12px; color:var(--muted); flex:1 1 200px; }
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+    #layoutNotice.storage-warning { position:relative; width:auto; height:auto; margin:12px 16px; clip-path:none; white-space:normal; color:#ffd58a; }
     main.dashboard { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; padding:16px; align-items:start; }
-    main.dashboard.has-preview-dock { grid-template-columns:190px minmax(0,1fr); }
-    .preview-dock { position:sticky; top:16px; min-width:0; }
     .dashboard-columns { display:grid; gap:16px; align-items:start; min-width:0; }
     .dashboard-column { display:flex; flex-direction:column; gap:16px; min-width:0; min-height:80px; }
     section.dashboard-card { min-width:0; margin:0 !important; padding:14px; grid-column:auto; grid-row:auto; position:relative; top:auto; max-height:none; overflow:visible; container-type:inline-size; }
     .card-heading { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
     .card-heading h2 { flex:1; min-width:0; font-size:15px; margin:0; }
-    .card-collapse { padding:4px 8px; font-size:13px; background:transparent; border-color:transparent; }
-    .card-body[hidden] { display:none; }
-    .dashboard-card.collapsed .card-heading { margin-bottom:0; }
     .card-body p { font-size:13px; line-height:1.5; }
     .card-body select { max-width:100%; min-width:0; width:100%; }
-    .card-body .row select { width:auto; flex:1 1 150px; }
+    .card-body .row select { flex:1 1 240px; }
     .card-body input[type=number] { max-width:80px; }
     .card-body .control-grid { grid-template-columns:minmax(0,1fr); gap:4px; }
     .card-body .control-grid label { font-size:12px; margin:8px 0 1px; }
     .card-body .control-grid input[type=range] { width:100%; min-width:60px; }
-    .card-body .control-grid .row { flex-wrap:nowrap; }
+    .card-body .control-grid .row input[type=range] { flex:1; min-width:80px; width:0; }
     .card-body .music-meter { grid-template-columns:repeat(2,minmax(0,1fr)); }
     .card-body .status { grid-template-columns:repeat(2,minmax(0,1fr)); }
     .card-body pre { max-height:380px; overflow:auto; overflow-wrap:anywhere; }
     .card-body button { padding:8px 9px; font-size:12px; }
     .card-body .notice { font-size:12px; }
-    .preview-dock .simulator { max-height:calc(100dvh - 32px); overflow:auto; }
     .simulator .device { justify-content:center; }
     .simulator canvas { height:min(50vh,420px); }
-    .move-controls { display:none; gap:5px; align-items:center; flex-wrap:wrap; margin:0 0 12px; }
-    .arranging .move-controls { display:flex; }
-    .move-controls button { padding:5px 8px; font-size:12px; }
-    .move-controls select { flex:1; min-width:70px; font-size:12px; padding:5px; }
-    .move-handle { cursor:grab; touch-action:none; user-select:none; }
+    .move-handle { flex:0 0 32px; width:32px; height:32px; display:grid; place-items:center; padding:0; color:var(--muted); background:transparent; border:1px solid var(--line); border-radius:6px; cursor:grab; touch-action:none; user-select:none; }
+    .move-handle:hover { color:var(--cyan); background:#202938; }
+    .move-handle svg { pointer-events:none; }
     .move-handle:active { cursor:grabbing; }
-    .arranging .dashboard-column { border:1px dashed #395266; border-radius:12px; padding:8px; }
-    .arranging .dashboard-columns { align-items:stretch; }
-    .column-label { display:none; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
-    .arranging .column-label { display:block; }
+    .moving-card .dashboard-columns { align-items:stretch; }
+    .moving-card .dashboard-column { outline:1px dashed #395266; outline-offset:4px; border-radius:12px; }
     .dashboard-card.dragging { opacity:.35; }
     .card-drop-target { border:2px dashed var(--cyan); background:#14333d; border-radius:12px; min-height:70px; }
-    .arranging .preview-dock .move-controls { display:none; }
     button:focus-visible, select:focus-visible, input:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
     @container (min-width: 600px) {
       .card-body .control-grid { grid-template-columns:minmax(160px,1fr) minmax(160px,1fr); gap:8px 12px; }
       .card-body .music-meter { grid-template-columns:repeat(4,minmax(0,1fr)); }
     }
     @media(max-width:700px) {
-      main.dashboard.has-preview-dock { grid-template-columns:minmax(0,1fr); }
-      .preview-dock { position:relative; top:auto; }
-      .preview-dock .simulator { max-height:none; }
       .simulator canvas { height:180px; }
-      .layout-toolbar { gap:10px; padding:12px; }
+      .move-handle { flex-basis:44px; width:44px; height:44px; }
       main.dashboard { padding:12px; }
       .dashboard-card { overflow-wrap:anywhere; }
     }
@@ -147,15 +130,7 @@
     <h1>Ambient Display Control Center</h1>
     <p>Semantic layers in, complete LED frames out.</p>
   </header>
-  <nav class="layout-toolbar" aria-label="Dashboard layout">
-    <button id="arrangeDashboard" aria-pressed="false">Arrange cards</button>
-    <label for="dashboardColumns">Control columns
-      <select id="dashboardColumns"><option value="auto">Auto</option><option value="2">2 columns</option><option value="3">3 columns</option><option value="4">4 columns</option></select>
-    </label>
-    <label><input id="pinPreview" type="checkbox" checked> Pin strip preview</label>
-    <button id="resetDashboard">Reset layout</button>
-    <span id="layoutNotice" role="status">Your layout is saved on this device. Phone and laptop layouts can differ.</span>
-  </nav>
+  <span id="layoutNotice" class="sr-only" role="status"></span>
   <main id="dashboard">
     <div class="controls">
       <section style="margin-bottom:20px">
@@ -374,40 +349,47 @@
     </div>
     <section class="simulator">
       <h2>House light window</h2>
-      <p style="color:var(--muted);margin-top:-6px">Pinned live view of the exact pixels being sent to the active physical lane.</p>
+      <p style="color:var(--muted);margin-top:-6px">Live view of the exact pixels being sent to the active physical lane.</p>
       <div id="devices"></div>
     </section>
   </main>
   <script>
     // Presentation-only state: rearranging cards never sends lighting commands.
     (()=>{
-      const key='ambient-dashboard-layout-v1';
+      const key='ambient-dashboard-layout-v2';
       const board=document.querySelector('#dashboard');
       const definitions=[['power','Light power & brightness',340],['everyday','Everyday control',320],['music','Music lights',680],['system','System status',90],['ambient','Ambient nebula',500],['instincts','Automatic instincts',300],['phone','Phone access',190],['animations','Animations and information',490],['technical','Technical live state',90]];
       const sections=[...board.querySelectorAll('.controls > section')];
       const preview=board.querySelector('.simulator');
-      let state={columns:'auto',pin:true,layouts:{},collapsed:[]}, saved=false;
-      try { const data=JSON.parse(localStorage.getItem(key)); if(data&&data.version===1){ state={...state,...data}; saved=true; } } catch(error) {}
-      if(!['auto','2','3','4'].includes(state.columns)) state.columns='auto';
-      state.pin=state.pin!==false;
-      if(!Array.isArray(state.collapsed)) state.collapsed=[];
+      let state={layouts:{}};
+      try {
+        const data=JSON.parse(localStorage.getItem(key));
+        if(data?.version===2) state=data;
+        else {
+          const old=JSON.parse(localStorage.getItem('ambient-dashboard-layout-v1'));
+          // Keep existing placements when possible; the preview is now a card too.
+          for(let n=1;n<=4;n++) {
+            const layout=old?.layouts?.[`free-${n}`]||old?.layouts?.[`pinned-${n}`];
+            if(Array.isArray(layout)) state.layouts[n]=layout;
+          }
+        }
+      } catch(error) {}
       if(!state.layouts||typeof state.layouts!=='object') state.layouts={};
       const cards=new Map();
-      let arranging=false, count=0, activeLayout='', drag=null, frameId=null;
-      const dock=document.createElement('div'); dock.className='preview-dock';
+      let count=0, drag=null, frameId=null;
       const columns=document.createElement('div'); columns.className='dashboard-columns';
       function save(message='Layout saved on this device.') {
-        try { localStorage.setItem(key,JSON.stringify({...state,version:1})); }
-        catch(error) { message='Layout works, but browser storage is unavailable; it will reset on reload.'; }
-        document.querySelector('#layoutNotice').textContent=message;
+        const notice=document.querySelector('#layoutNotice');
+        try { localStorage.setItem(key,JSON.stringify({...state,version:2})); notice.classList.remove('storage-warning'); }
+        catch(error) { message='Your browser could not save this arrangement. It will reset on reload.'; notice.classList.add('storage-warning'); }
+        notice.textContent=message;
       }
       function remember() {
-        state.layouts[activeLayout]=[...columns.children].map(column=>[...column.querySelectorAll(':scope > .dashboard-card')].map(card=>card.dataset.card));
+        state.layouts[count]=[...columns.children].map(column=>[...column.querySelectorAll(':scope > .dashboard-card')].map(card=>card.dataset.card));
         save();
       }
       function move(card,destination,before=null) {
-        destination.insertBefore(card,before); remember();
-        document.querySelector('#layoutNotice').textContent=`${card.dataset.title} moved. Layout saved.`;
+        destination.insertBefore(card,before); remember(); card.querySelector('.move-handle').focus();
       }
       function prepare(card,id,title,height) {
         card.classList.add('dashboard-card'); card.dataset.card=id; card.dataset.title=title; card.dataset.height=height;
@@ -415,53 +397,50 @@
         const body=document.createElement('div'); body.className='card-body'; body.id=`card-body-${id}`;
         heading.remove(); while(card.firstChild) body.appendChild(card.firstChild);
         const head=document.createElement('div'); head.className='card-heading'; head.appendChild(heading);
-        const collapse=document.createElement('button'); collapse.className='card-collapse'; collapse.setAttribute('aria-controls',body.id);
-        const setCollapse=()=>{ const hidden=state.collapsed.includes(id); body.hidden=hidden; card.classList.toggle('collapsed',hidden); collapse.textContent=hidden?'+':'−'; collapse.setAttribute('aria-expanded',String(!hidden)); collapse.setAttribute('aria-label',`${hidden?'Expand':'Collapse'} ${title}`); };
-        collapse.onclick=()=>{ state.collapsed=state.collapsed.includes(id)?state.collapsed.filter(value=>value!==id):[...state.collapsed,id]; setCollapse(); save(); };
-        setCollapse(); head.appendChild(collapse);
-        const moves=document.createElement('div'); moves.className='move-controls';
-        const handle=document.createElement('button'); handle.textContent='⠿ Drag'; handle.className='move-handle'; handle.setAttribute('aria-label',`Drag ${title}`);
+        const handle=document.createElement('button'); handle.className='move-handle'; handle.type='button'; handle.setAttribute('aria-label',`Move ${title}`);
+        handle.title='Drag to move · arrow keys also move this card';
+        handle.setAttribute('aria-keyshortcuts','ArrowUp ArrowDown ArrowLeft ArrowRight');
+        handle.innerHTML='<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="5" cy="3" r="1.4"/><circle cx="11" cy="3" r="1.4"/><circle cx="5" cy="8" r="1.4"/><circle cx="11" cy="8" r="1.4"/><circle cx="5" cy="13" r="1.4"/><circle cx="11" cy="13" r="1.4"/></svg>';
         handle.addEventListener('pointerdown',event=>beginDrag(event,card));
-        const up=document.createElement('button'); up.textContent='↑'; up.setAttribute('aria-label',`Move ${title} up`);
-        up.onclick=()=>{ const previous=card.previousElementSibling; if(previous?.classList.contains('dashboard-card')) move(card,card.parentElement,previous); };
-        const down=document.createElement('button'); down.textContent='↓'; down.setAttribute('aria-label',`Move ${title} down`);
-        down.onclick=()=>{ const next=card.nextElementSibling; if(next?.classList.contains('dashboard-card')) move(card,card.parentElement,next.nextElementSibling); };
-        const destination=document.createElement('select'); destination.setAttribute('aria-label',`Move ${title} to column`);
-        destination.onchange=()=>{ if(destination.value!=='') move(card,columns.children[Number(destination.value)]); destination.value=''; };
-        moves.append(handle,up,down,destination); card.append(head,moves,body); cards.set(id,card);
+        handle.addEventListener('keydown',event=>{
+          if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key)||drag) return;
+          event.preventDefault();
+          const column=card.parentElement, index=[...columns.children].indexOf(column);
+          if(event.key==='ArrowUp'&&card.previousElementSibling) move(card,column,card.previousElementSibling);
+          if(event.key==='ArrowDown'&&card.nextElementSibling) move(card,column,card.nextElementSibling.nextElementSibling);
+          if(event.key==='ArrowLeft'&&index>0) move(card,columns.children[index-1]);
+          if(event.key==='ArrowRight'&&index<count-1) move(card,columns.children[index+1]);
+        });
+        head.appendChild(handle); card.append(head,body); cards.set(id,card);
       }
       definitions.forEach(([id,title,height],index)=>prepare(sections[index],id,title,height));
       prepare(preview,'preview','House light window',600);
-      board.replaceChildren(dock,columns); board.className='dashboard';
+      board.replaceChildren(columns); board.className='dashboard';
       function desiredCount() {
-        const width=board.clientWidth-32-(state.pin&&window.innerWidth>700?206:0);
-        const fits=Math.max(1,Math.min(4,Math.floor((width+16)/350)));
-        return state.columns==='auto'?fits:Math.min(fits,Number(state.columns));
+        const width=board.clientWidth-32;
+        return Math.max(1,Math.min(4,Math.floor((width+16)/350)));
       }
       function arrange(force=false) {
         if(drag) return;
-        const next=desiredCount(), layoutKey=`${state.pin?'pinned':'free'}-${next}`;
-        if(!force&&next===count&&layoutKey===activeLayout) return;
-        count=next; activeLayout=layoutKey;
-        const eligible=[...cards.keys()].filter(id=>id!=='preview'||!state.pin);
-        const known=new Set(), raw=state.layouts[layoutKey];
+        const next=desiredCount();
+        if(!force&&next===count) return;
+        count=next;
+        const eligible=[...cards.keys()];
+        const known=new Set(), raw=state.layouts[count];
         let layout=Array.from({length:count},(_,index)=>Array.isArray(raw?.[index])?raw[index].filter(id=>eligible.includes(id)&&!known.has(id)&&known.add(id)):[]);
         if(!known.size) {
           const heights=Array(count).fill(0);
-          const initial=state.pin?['power','music','ambient','everyday','animations','instincts','system','phone','technical']:['preview','power','music','ambient','everyday','animations','instincts','system','phone','technical'];
+          const initial=['preview','power','music','ambient','everyday','animations','instincts','system','phone','technical'];
           initial.forEach(id=>{ const shortest=heights.indexOf(Math.min(...heights)); layout[shortest].push(id); heights[shortest]+=Number(cards.get(id).dataset.height)+16; known.add(id); });
         }
         eligible.filter(id=>!known.has(id)).forEach(id=>layout[layout.reduce((best,items,index)=>items.length<layout[best].length?index:best,0)].push(id));
-        board.classList.toggle('has-preview-dock',state.pin); dock.hidden=!state.pin;
-        if(state.pin) dock.appendChild(preview);
         columns.replaceChildren(); columns.style.gridTemplateColumns=`repeat(${count},minmax(0,1fr))`;
-        layout.forEach((ids,index)=>{ const column=document.createElement('div'); column.className='dashboard-column'; column.dataset.column=index; column.setAttribute('aria-label',`Column ${index+1}`); const label=document.createElement('span'); label.className='column-label'; label.textContent=`Column ${index+1}`; column.appendChild(label); ids.forEach(id=>column.appendChild(cards.get(id))); columns.appendChild(column); });
-        cards.forEach(card=>{ const select=card.querySelector('.move-controls select'); select.replaceChildren(new Option('Move to…','')); for(let index=0;index<count;index++) select.add(new Option(`Column ${index+1}`,String(index))); });
+        layout.forEach((ids,index)=>{ const column=document.createElement('div'); column.className='dashboard-column'; column.setAttribute('aria-label',`Column ${index+1}`); ids.forEach(id=>column.appendChild(cards.get(id))); columns.appendChild(column); });
       }
       function beginDrag(event,card) {
-        if(!arranging||event.button!==0||card.parentElement===dock) return;
+        if(event.button!==0||drag) return;
         event.preventDefault();
-        drag={card,handle:event.currentTarget,startX:event.clientX,startY:event.clientY,x:event.clientX,y:event.clientY,placeholder:null};
+        drag={card,handle:event.currentTarget,pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,x:event.clientX,y:event.clientY,placeholder:null};
         drag.handle.setPointerCapture(event.pointerId);
       }
       function placeDrop() {
@@ -472,11 +451,12 @@
         target.insertBefore(drag.placeholder,before||null);
       }
       function updateDrag(event) {
-        if(!drag) return;
+        if(!drag||event.pointerId!==drag.pointerId) return;
         drag.x=event.clientX; drag.y=event.clientY;
         if(!drag.placeholder&&Math.hypot(drag.x-drag.startX,drag.y-drag.startY)>6) {
           drag.placeholder=document.createElement('div'); drag.placeholder.className='card-drop-target'; drag.placeholder.textContent='Drop card here';
           drag.card.classList.add('dragging'); drag.card.after(drag.placeholder);
+          board.classList.add('moving-card');
           const scroll=()=>{ if(!drag) return; if(drag.y<65) window.scrollBy(0,-12); else if(drag.y>window.innerHeight-65) window.scrollBy(0,12); placeDrop(); frameId=requestAnimationFrame(scroll); }; frameId=requestAnimationFrame(scroll);
         }
         placeDrop();
@@ -485,27 +465,20 @@
         if(!drag) return;
         cancelAnimationFrame(frameId);
         if(drag.placeholder){ if(commit) drag.placeholder.before(drag.card); drag.placeholder.remove(); }
-        drag.card.classList.remove('dragging'); drag=null;
-        if(commit) remember(); arrange();
+        const moved=!!drag.placeholder;
+        if(drag.handle.hasPointerCapture(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+        drag.card.classList.remove('dragging'); board.classList.remove('moving-card'); drag=null;
+        if(commit&&moved) remember(); arrange();
       }
       // Listen at document scope so release outside the handle still finishes
       // a drag, including when a browser loses pointer capture during layout.
       document.addEventListener('pointermove',updateDrag);
-      document.addEventListener('pointerup',()=>endDrag(true));
-      document.addEventListener('pointercancel',()=>endDrag(false));
+      document.addEventListener('pointerup',event=>{ if(event.pointerId===drag?.pointerId) endDrag(true); });
+      document.addEventListener('pointercancel',event=>{ if(event.pointerId===drag?.pointerId) endDrag(false); });
+      window.addEventListener('blur',()=>endDrag(false));
       document.addEventListener('keydown',event=>{ if(event.key==='Escape') endDrag(false); });
-      document.querySelector('#arrangeDashboard').onclick=event=>{
-        endDrag(false); arranging=!arranging; board.classList.toggle('arranging',arranging); event.currentTarget.textContent=arranging?'Done arranging':'Arrange cards'; event.currentTarget.setAttribute('aria-pressed',String(arranging));
-        document.querySelector('#layoutNotice').textContent=arranging?'Drag a card handle, or use its arrows and Move to menu. Unpin the preview to move it too.':'Layout saved on this device.';
-      };
-      const columnSelect=document.querySelector('#dashboardColumns'); columnSelect.value=state.columns;
-      columnSelect.onchange=()=>{ endDrag(false); state.columns=columnSelect.value; arrange(true); save(); };
-      const pin=document.querySelector('#pinPreview'); pin.checked=state.pin;
-      pin.onchange=()=>{ endDrag(false); state.pin=pin.checked; arrange(true); save(); };
-      document.querySelector('#resetDashboard').onclick=()=>{ endDrag(false); state={columns:'auto',pin:true,layouts:{},collapsed:[]}; columnSelect.value='auto'; pin.checked=true; cards.forEach(card=>{ card.classList.remove('collapsed'); card.querySelector('.card-body').hidden=false; const button=card.querySelector('.card-collapse'); button.textContent='−'; button.setAttribute('aria-expanded','true'); button.setAttribute('aria-label',`Collapse ${card.dataset.title}`); }); arrange(true); save('Default layout restored.'); };
       new ResizeObserver(()=>arrange()).observe(board);
       arrange(true);
-      if(saved) document.querySelector('#layoutNotice').textContent='Saved layout restored on this device.';
     })();
   </script>
   <script>
