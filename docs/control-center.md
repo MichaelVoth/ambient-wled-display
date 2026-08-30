@@ -10,6 +10,27 @@ http://raspberrypi.local:8090
 The panel shows the exact two-lane frame being calculated, whether or not
 physical output is enabled.
 
+## Arrange your dashboard
+
+Use **Control columns** to choose Auto, two, three, or four control columns.
+The dashboard reduces the count on smaller screens so controls stay usable.
+Cards stack independently; a tall card does not create empty rows next to it.
+
+Select **Arrange cards**, then drag a card using its **Drag** handle. The
+highlighted space shows where it will land. Alternatively, use **Move to…**
+and the up/down arrows; these also work with touch or a keyboard. Select
+**Done arranging** to hide the movement controls. Escape cancels a drag.
+
+The **− / +** button collapses or expands each card. **Pin strip preview**
+keeps the live strip in its own sticky left-hand dock on desktop; uncheck it
+to move the preview like any other card. On phones the preview is shorter
+and scrolls normally.
+
+Positions and collapsed cards save automatically in this browser, separately
+for different column counts and pinned/unpinned layouts. Your phone can have
+a different arrangement from your laptop. **Reset layout** restores the
+default arrangement. None of these layout controls changes the lights.
+
 ## Light power and overall brightness
 
 The first card has **On**, **Off**, a 1–100% brightness slider, and quick
@@ -80,8 +101,7 @@ base may produce sparse, independently timed glimmers. These are intentionally
 subtle and yield to rain, the hourly clock, music, and alerts.
 
 On wider screens the exact physical-lane simulator is pinned in the left
-column. The wider right column contains the controls and can scroll
-independently beneath it.
+dock by default, beside the rearrangeable control columns.
 
 The control center also provides a **manual** mode with:
 
