@@ -292,6 +292,8 @@ class RendererTests(unittest.TestCase):
             )
             engine = RendererEngine(config)
             engine._validate_outputs = lambda: None
+            engine._wled_state = lambda device, payload=None: {"on": True, "bri": 128}
+            engine.power_path = pathlib.Path(directory) / "display-settings.json"
             try:
                 engine.set_music(True, "chunks")
                 engine.update_audio({"bass": 0.8, "mid": 0.5, "treble": 0.4, "energy": 0.7, "beat": 1, "phase": 2})

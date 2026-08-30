@@ -10,6 +10,27 @@ http://raspberrypi.local:8090
 The panel shows the exact two-lane frame being calculated, whether or not
 physical output is enabled.
 
+## Light power and overall brightness
+
+The first card has **On**, **Off**, a 1–100% brightness slider, and quick
+10/25/50/75/100% levels. On commands WLED's actual power state and resumes
+the renderer. Off stops frames, cancels temporary events, and switches WLED
+off. Rain updates and hourly events cannot bypass Off. A later explicit On,
+music start, arrival, or the next morning schedule can turn the light on.
+
+Overall brightness multiplies the completed frame, so it dims rain, music,
+the clock, and ambient colors together. It fades to the new level over 0.4
+seconds. Changing this while off does not switch the strip on. Settings live
+in `/data/display-settings.json` and survive renderer restarts. 100% means
+the existing configured output, not an override of WLED's electrical limits.
+
+Home Assistant calls `POST /api/power` with `{"on":true,"morning":true}` at
+6 AM, on startup during the day, and every five minutes during the day. The
+renderer confirms WLED is on before saving today's successful morning date.
+Later calls on that date do nothing, preserving a user's later Off choice.
+Rain is never a condition for power. Failed requests do not mark the morning
+complete and can be retried. Manual controls omit `morning`.
+
 ## Output modes
 
 - **Renderer → WLED** continuously sends the composed ambient display to WLED.

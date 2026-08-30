@@ -89,6 +89,23 @@
   </header>
   <main>
     <div class="controls">
+      <section style="margin-bottom:20px">
+        <h2>Light power &amp; brightness</h2>
+        <div class="row">
+          <button id="powerOn" class="primary">On</button>
+          <button id="powerOff">Off</button>
+          <span id="powerState" role="status">Checking the strip…</span>
+        </div>
+        <label for="masterBrightness">Overall brightness <output id="masterBrightnessValue">100%</output></label>
+        <input id="masterBrightness" style="width:100%" type="range" min="1" max="100" step="1" value="100">
+        <div class="row" style="margin-top:8px">
+          <button data-brightness="0.1">10%</button><button data-brightness="0.25">25%</button>
+          <button data-brightness="0.5">50%</button><button data-brightness="0.75">75%</button>
+          <button data-brightness="1">100%</button>
+        </div>
+        <p style="color:var(--muted)">Dims everything: ambient colors, rain, music, and the clock. Saved across restarts. Changing brightness while off keeps the strip off.</p>
+        <div id="powerNotice" class="notice" role="status">Morning On runs every day at 6 AM, including rainy days.</div>
+      </section>
       <section>
         <h2>Everyday control</h2>
         <p style="color:var(--muted);margin-top:-6px">Tell the system what is happening. The renderer handles the technical ownership changes.</p>
@@ -97,7 +114,7 @@
           <button id="liveAutomatically" class="primary">Live automatically</button>
           <button id="resumeAmbient">Resume ambient</button>
           <button id="startMusic">Dance to music</button>
-          <button id="quietNow">Quiet / stop output</button>
+          <button id="quietNow">Turn light off</button>
         </div>
         <details style="margin-top:14px">
           <summary>Play a one-time scene</summary>
@@ -426,6 +443,14 @@
         document.querySelector('#health').className=status.ok?'ok':'bad';
         document.querySelector('#fps').textContent=`${status.fps_recent} / ${status.fps_target} FPS`;
         const device=status.devices[0],receiver=status.receiver_status[device?.id]||{};
+        document.querySelector('#powerOn').classList.toggle('active',!!status.power?.on);
+        document.querySelector('#powerOff').classList.toggle('active',!status.power?.on);
+        document.querySelector('#powerState').textContent=status.power?.on ? (receiver.on===false?'On requested · WLED reports off':'On') : 'Off';
+        if(document.activeElement!==document.querySelector('#masterBrightness')&&!powerBusy) {
+          const level=Math.round((status.power?.brightness??1)*100);
+          document.querySelector('#masterBrightness').value=level;
+          document.querySelector('#masterBrightnessValue').textContent=`${level}%`;
+        }
         document.querySelector('#receiverFps').textContent=receiver.fps===undefined?'Waiting…':`${receiver.fps} / ${status.fps_target} FPS`;
         document.querySelector('#transport').textContent=device?`${device.transport} :${device.transport_port}`:'—';
         document.querySelector('#modeText').textContent=status.mode;
@@ -463,6 +488,22 @@
       try { await work(); notice.textContent=success; notice.className='notice ok'; await refresh(); }
       catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
     }
+    let powerBusy=false;
+    async function changePower(body) {
+      const notice=document.querySelector('#powerNotice');
+      powerBusy=true;
+      try {
+        await api('/api/power',body);
+        notice.textContent=body.on===false?'Light switched off. Rain and clock events will not turn it back on.':body.on===true?'Light switched on. Current colors and rain settings are preserved.':'Brightness saved for all effects.';
+        notice.className='notice ok';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+      finally { powerBusy=false; await refresh(); }
+    }
+    document.querySelector('#powerOn').onclick=()=>changePower({on:true});
+    document.querySelector('#powerOff').onclick=()=>changePower({on:false});
+    document.querySelector('#masterBrightness').oninput=event=>document.querySelector('#masterBrightnessValue').textContent=`${event.target.value}%`;
+    document.querySelector('#masterBrightness').onchange=event=>changePower({brightness:+event.target.value/100});
+    for(const button of document.querySelectorAll('[data-brightness]')) button.onclick=()=>changePower({brightness:+button.dataset.brightness});
     async function init() {
       config=await api('/api/config'); buildDevices();
       try {
@@ -511,10 +552,10 @@
     }
     document.querySelector('#liveAutomatically').onclick=()=>everyday(async()=>{
       if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect});
-      await api('/api/mode',{mode:'renderer'});
+      await api('/api/power',{on:true});
       await api('/api/ambient',{mode:'adaptive',expression:+document.querySelector('#ambientExpression').value});
     },'The house is choosing from time, weather, sunlight, and presence.');
-    document.querySelector('#resumeAmbient').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/mode',{mode:'renderer'}); },'Ambient lighting resumed.');
+    document.querySelector('#resumeAmbient').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/power',{on:true}); },'Ambient lighting resumed.');
     document.querySelector('#startMusic').onclick=toggleMusic;
     document.querySelector('#musicToggle').onclick=toggleMusic;
     document.querySelector('#repairMusicRoutes').onclick=async()=>{
@@ -549,7 +590,7 @@
     };
     document.querySelector('#musicPrimary').onchange=updateMusicLook;
     document.querySelector('#musicAccent').onchange=updateMusicLook;
-    document.querySelector('#quietNow').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/mode',{mode:'off'}); },'Renderer output stopped.');
+    document.querySelector('#quietNow').onclick=()=>changePower({on:false});
     for(const button of document.querySelectorAll('[data-everyday-signal]')) button.onclick=()=>everyday(()=>api('/api/events/signal',{signal:button.dataset.everydaySignal,take_output:true}),`${button.textContent} animation started.`);
     document.querySelector('#previewHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:false}),'Preview started.');
     document.querySelector('#runHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:true}),'WLED preflight passed. Temporary output started.');

@@ -36,8 +36,11 @@ In Home Assistant, run **Test Ambient Renderer Hour** and choose a value from
 renderer is active. Home Assistant now calls renderer-native signals for the
 Tuesday–Friday 4 PM celebration, weekday lunch reminders, Pi-hole failures,
 GitHub build failures, and high-energy-use warnings. Rain is a persistent
-renderer layer. Only midnight, arrival/departure, and morning startup still
-temporarily use legacy WLED sweep presets.
+renderer layer. Morning, midnight, and arrival/departure now use the renderer's
+explicit power endpoint. Morning On runs in all weather and retries until
+confirmed; a saved daily receipt preserves later manual Off commands. The old
+startup preset writer has been removed. Midnight and departure switch off
+directly rather than playing legacy sweep presets.
 
 ## Adding another strip
 
@@ -77,13 +80,12 @@ ownership.
 
 ## Rollout path
 
-The current system is deliberately in mixed mode: the renderer continuously
-owns the ambient base, hourly timeline, and rain layer for the connected office
-lane. Home Assistant temporarily releases it for legacy morning, midnight,
-arrival, and departure presets. The work celebration, lunch reminder, Pi-hole
-warning, GitHub build warning, and high-energy-use warning are renderer-native
-events. Arrival/departure and morning/midnight power choreography are the next
-candidates to migrate.
+The renderer owns the ambient base, hourly timeline, rain, and master power
+and brightness for the connected office lane. Home Assistant supplies
+schedules and context. The work celebration, lunch reminder, Pi-hole warning,
+GitHub build warning, and high-energy-use warning are renderer-native events.
+Legacy sweep scripts remain available for recovery but are no longer called
+by the morning, midnight, or departure automations.
 
 See [the performance audit](performance-audit.md) for the 9 PM stutter root
 cause, live benchmark, and remaining capacity work.

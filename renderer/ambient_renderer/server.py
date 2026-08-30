@@ -73,6 +73,8 @@ class RendererHandler(BaseHTTPRequestHandler):
             self._json({"frames": self.server.engine.frame_snapshot()})
         elif path == "/api/audio":
             self._json(self.server.engine.music_status())
+        elif path == "/api/power":
+            self._json(self.server.engine.power_status())
         elif path == "/api/live":
             self._json({
                 "music": self.server.engine.music_status(),
@@ -107,7 +109,12 @@ class RendererHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             body = self._body()
-            if path == "/api/events/hour":
+            if path == "/api/power":
+                unknown = set(body) - {"on", "brightness", "morning"}
+                if unknown:
+                    raise ValueError("unknown power settings: " + ", ".join(sorted(unknown)))
+                self._json({"ok": True, "power": self.server.engine.set_power(**body)})
+            elif path == "/api/events/hour":
                 hour = int(body.get("hour", 0))
                 if not 0 <= hour <= 23:
                     raise ValueError("hour must be between 0 and 23")

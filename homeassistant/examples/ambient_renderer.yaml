@@ -2,6 +2,17 @@
 # Change the host if the renderer does not run on the same Pi.
 
 rest_command:
+  ambient_renderer_power:
+    url: "http://127.0.0.1:8090/api/power"
+    method: POST
+    content_type: application/json
+    payload: '{"on": {{ power_on | bool | lower }}}'
+
+  ambient_renderer_morning:
+    url: "http://127.0.0.1:8090/api/power"
+    method: POST
+    content_type: application/json
+    payload: '{"on": true, "morning": true}'
   ambient_renderer_hour:
     url: "http://127.0.0.1:8090/api/events/hour"
     method: POST
@@ -133,6 +144,35 @@ script:
           take_output: true
 
 automation:
+  # Replace the old morning/startup preset automations with this one; do not
+  # leave a second automation writing WLED presets after these power commands.
+  - id: ambient_renderer_morning_power
+    alias: Ambient Renderer Morning On
+    triggers:
+      - trigger: time
+        at: "06:00:00"
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/5"
+    conditions:
+      - condition: template
+        value_template: "{{ now().hour >= 6 }}"
+    actions:
+      - action: rest_command.ambient_renderer_morning
+    mode: single
+
+  - id: ambient_renderer_midnight_power
+    alias: Ambient Renderer Midnight Off
+    triggers:
+      - trigger: time
+        at: "00:00:00"
+    actions:
+      - action: rest_command.ambient_renderer_power
+        data:
+          power_on: false
+    mode: single
+
   - id: ambient_renderer_house_context
     alias: Ambient Renderer House Context
     triggers:

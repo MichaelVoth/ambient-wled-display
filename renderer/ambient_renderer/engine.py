@@ -4,15 +4,18 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 import time
 import urllib.request
 from collections import deque
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from .color import RGB, mix, palette_color, parse_hex, smoothstep
+from .color import RGB, mix, palette_color, parse_hex, scale, smoothstep
 from .config import RendererConfig
 from .effects import (
     AlertEvent,
@@ -88,11 +91,39 @@ class RendererEngine:
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             LOGGER.warning("could not load house context: %s", exc)
         self.lock = threading.RLock()
+        self.output_lock = threading.RLock()
+        self.power_path = self.settings_path.with_name("display-settings.json")
+        self.power_on = True
+        self.master_brightness = 1.0
+        self.morning_date = None
+        self.power_persisted = False
+        try:
+            saved_power = json.loads(self.power_path.read_text(encoding="utf-8"))
+            if not isinstance(saved_power["on"], bool):
+                raise ValueError("invalid saved power state")
+            level = float(saved_power["brightness"])
+            if not 0.01 <= level <= 1.0:
+                raise ValueError("invalid saved brightness")
+            self.power_on = saved_power["on"]
+            self.master_brightness = level
+            self.morning_date = saved_power.get("morning_date")
+            self.power_persisted = True
+        except FileNotFoundError:
+            pass
+        except (KeyError, OSError, ValueError, TypeError) as exc:
+            LOGGER.warning("could not load display settings: %s", exc)
+        self.brightness_from = self.master_brightness
+        self.brightness_changed_at = time.monotonic() - 1.0
         self.stop_event = threading.Event()
         self.thread: threading.Thread | None = None
         self.monitor_thread: threading.Thread | None = None
         self.mode = "renderer" if config.output_enabled else "preview"
-        self.layers = {"rain": False, "focus": False}
+        if not self.power_on:
+            self.mode = "off"
+        self.layers = {
+            "rain": self.context["weather"] in {"rainy", "pouring", "lightning-rainy", "snowy-rainy", "hail"},
+            "focus": False,
+        }
         self.layer_targets: dict[str, tuple[str, ...] | None] = {"rain": None, "focus": None}
         self.active_event: HourEvent | AlertEvent | SignalEvent | None = None
         self.event_queue: deque[HourEvent | AlertEvent | SignalEvent] = deque()
@@ -149,6 +180,18 @@ class RendererEngine:
                 self.mode = "preview"
                 self.output_error = str(exc)
                 self._record("startup_output_rejected", error=self.output_error)
+        if self.config.output_enabled:
+            try:
+                if self.power_persisted:
+                    self.set_power(on=self.power_on)
+                else:
+                    # First installation adopts actual hardware power; sending
+                    # frames alone is not proof that the strip is switched on.
+                    states = [self._wled_state(device) for device in self.config.devices]
+                    if not all(state.get("on") for state in states):
+                        self.set_power(on=False)
+            except ValueError as exc:
+                self.output_error = str(exc)
         self.stop_event.clear()
         self.thread = threading.Thread(target=self._run, name="ambient-renderer", daemon=True)
         self.thread.start()
@@ -173,6 +216,9 @@ class RendererEngine:
     def set_mode(self, mode: str) -> None:
         if mode not in {"renderer", "preview", "music", "off"}:
             raise ValueError("mode must be renderer, preview, music, or off")
+        if mode == "off":
+            self.set_power(on=False)
+            return
         with self.lock:
             current_mode = self.mode
         if mode == "renderer" and current_mode != "renderer":
@@ -185,6 +231,104 @@ class RendererEngine:
                 self.active_event = None
                 self.event_queue.clear()
         self._record("mode_changed", mode=mode)
+
+    @staticmethod
+    def _wled_state(device: Any, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = urllib.request.Request(
+            f"http://{device.host}/json/state",
+            data=None if payload is None else json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=2.0) as response:
+                return json.load(response)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{device.name}: could not confirm power: {exc}") from exc
+
+    def power_status(self) -> dict[str, Any]:
+        with self.lock:
+            return {"on": self.power_on, "brightness": self.master_brightness,
+                    "morning_date": self.morning_date}
+
+    def _persist_power(self) -> None:
+        try:
+            self.power_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.power_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(self.power_status()) + "\n", encoding="utf-8")
+            temporary.replace(self.power_path)
+            self.power_persisted = True
+        except OSError as exc:
+            raise ValueError(f"could not save display power settings: {exc}") from exc
+
+    def _brightness_at(self, now: float) -> float:
+        blend = smoothstep(0.0, 0.4, now - self.brightness_changed_at)
+        return self.brightness_from + (self.master_brightness - self.brightness_from) * blend
+
+    def set_power(self, on: bool | None = None, brightness: float | None = None,
+                  morning: bool = False) -> dict[str, Any]:
+        if on is not None and not isinstance(on, bool):
+            raise ValueError("on must be true or false")
+        if not isinstance(morning, bool):
+            raise ValueError("morning must be true or false")
+        if brightness is not None:
+            brightness = float(brightness)
+            if not math.isfinite(brightness) or not 0.01 <= brightness <= 1.0:
+                raise ValueError("brightness must be between 0.01 and 1.0")
+        if morning and on is not True:
+            raise ValueError("morning requires on: true")
+        with self.output_lock:
+            today = datetime.now(ZoneInfo(self.context["timezone"])).date().isoformat()
+            if morning and self.morning_date == today:
+                return {**self.power_status(), "already_applied": True}
+            if on is True:
+                self._validate_outputs()
+            if on is False:
+                with self.lock:
+                    self.power_on = False
+                    self.mode = "off"
+                    self.music_enabled = False
+                    self.active_event = None
+                    self.event_queue.clear()
+                    self.return_mode_after_events = None
+                # Persist the off intent even if a controller is unreachable.
+                self._persist_power()
+            if on is not None:
+                failures = []
+                for device in self.config.devices:
+                    try:
+                        if not on:
+                            self.outputs[device.id].send([(0, 0, 0)] * device.pixel_count)
+                        payload = {"on": on, "transition": 0, "lor": 0}
+                        if not on:
+                            payload["live"] = False
+                        self._wled_state(device, payload)
+                        observed = self._wled_state(device)
+                        if observed.get("on") is not on:
+                            raise ValueError(f"{device.name}: WLED did not confirm power {on}")
+                        with self.lock:
+                            self.receiver_status.setdefault(device.id, {}).update(
+                                {"on": observed["on"], "brightness": observed.get("bri")})
+                    except (ValueError, OSError) as exc:
+                        failures.append(str(exc))
+                if failures:
+                    self.output_error = "; ".join(failures)
+                    raise ValueError(self.output_error)
+                with self.lock:
+                    self.power_on = on
+                    self.mode = "renderer" if on else "off"
+                    self.return_mode_after_events = None
+                    self.output_error = None
+            with self.lock:
+                if brightness is not None:
+                    now = time.monotonic()
+                    self.brightness_from = self._brightness_at(now)
+                    self.master_brightness = brightness
+                    self.brightness_changed_at = now
+                if morning:
+                    self.morning_date = today
+                self._persist_power()
+            self._record("power_changed", **self.power_status(), morning=morning)
+            return self.power_status()
 
     def set_music(
         self,
@@ -208,7 +352,7 @@ class RendererEngine:
         if motion_speed is not None and not 0.1 <= float(motion_speed) <= 3.0:
             raise ValueError("music motion speed must be between 0.1 and 3.0")
         if enabled:
-            self._validate_outputs()
+            self.set_power(on=True)
         with self.lock:
             if effect is not None:
                 self.music_effect = effect
@@ -472,6 +616,7 @@ class RendererEngine:
             music_motion_speed = self.music_motion_speed
             audio_features = dict(self.audio_features)
             audio_age = now - self.audio_updated_at if self.audio_updated_at else float("inf")
+            brightness = self._brightness_at(now)
 
         if event:
             phase = event.phase(now)[0]
@@ -546,13 +691,19 @@ class RendererEngine:
                 target_lanes = self._target_lanes(device, event.targets)
                 if target_lanes:
                     frame = render_signal(frame, device, event, now, target_lanes)
-            self.frames[device.id] = frame
-            if mode == "renderer":
-                send_started = time.monotonic()
-                sent = self.outputs[device.id].send(frame)
-                self.send_durations.append(time.monotonic() - send_started)
-                self.bytes_sent += int(sent or 0)
-                self.frames_sent += 1
+            frame = [scale(pixel, brightness) for pixel in frame]
+            with self.output_lock:
+                # Recheck power after drawing so an in-flight frame cannot
+                # turn the strip back on after an Off request.
+                if not self.power_on:
+                    frame = [(0, 0, 0)] * device.pixel_count
+                self.frames[device.id] = frame
+                if mode == "renderer" and self.mode == "renderer" and self.power_on:
+                    send_started = time.monotonic()
+                    sent = self.outputs[device.id].send(frame)
+                    self.send_durations.append(time.monotonic() - send_started)
+                    self.bytes_sent += int(sent or 0)
+                    self.frames_sent += 1
         self.frames_rendered += 1
         self.last_frame_at = now
         self.frame_times.append(now)
@@ -617,7 +768,7 @@ class RendererEngine:
             event = self._event_summary(self.active_event, now) if self.active_event else None
             queue = [self._event_summary(item, now) for item in self.event_queue]
             health_issues: list[str] = []
-            if self.mode == "renderer":
+            if self.mode == "renderer" and self.power_on:
                 for device in self.config.devices:
                     receiver = self.receiver_status.get(device.id)
                     if not receiver:
@@ -627,6 +778,8 @@ class RendererEngine:
                         continue
                     if time.time() - float(receiver.get("checked_at", 0)) > 15:
                         health_issues.append(f"{device.name} receiver telemetry is stale")
+                    if receiver.get("on") is False:
+                        health_issues.append(f"{device.name} is switched off in WLED")
                     receiver_fps = float(receiver.get("fps") or 0)
                     if receiver_fps < self.config.fps * 0.8:
                         health_issues.append(
@@ -647,6 +800,7 @@ class RendererEngine:
                 ),
                 "health_issues": health_issues,
                 "mode": self.mode,
+                "power": self.power_status(),
                 "fps_target": self.config.fps,
                 "fps_average": round(self.frames_rendered / max(0.001, now - self.started_at), 2),
                 "fps_recent": round(recent_fps, 2),
@@ -904,6 +1058,7 @@ class RendererEngine:
                     ) as response:
                         info = json.load(response)
                     leds = info.get("leds", {})
+                    state = self._wled_state(device)
                     reading = {
                         "ok": True,
                         "checked_at": checked_at,
@@ -912,6 +1067,8 @@ class RendererEngine:
                         "live_mode": info.get("lm"),
                         "source_ip": info.get("lip"),
                         "version": info.get("ver"),
+                        "on": state.get("on"),
+                        "brightness": state.get("bri"),
                     }
                 except Exception as exc:
                     reading = {
