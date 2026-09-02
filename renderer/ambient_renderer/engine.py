@@ -42,6 +42,7 @@ AMBIENT_PRESETS = {
     "sunset": ["#18107e", "#a018b5", "#f01979", "#ff5318", "#ffb817"],
     "ember": ["#3f0012", "#a40723", "#f22918", "#ff7911", "#ffc11a"],
     "electric garden": ["#10106f", "#7030df", "#ec19cb", "#ff3c17", "#ff9d00", "#35ef31", "#00cfe8"],
+    "wild party": ["#ff006e", "#ff2415", "#ff7a00", "#ffe600", "#18f05c", "#00dcff", "#2155ff", "#8b16ff"],
 }
 
 
@@ -58,6 +59,7 @@ class RendererEngine:
             "saturation": config.saturation,
             "brightness": config.ambient_brightness,
             "expression": 1.0,
+            "style": "nebula",
         })
         try:
             persisted = json.loads(self.settings_path.read_text(encoding="utf-8"))
@@ -442,9 +444,11 @@ class RendererEngine:
 
     def set_ambient(self, changes: dict[str, Any]) -> dict[str, Any]:
         now = time.monotonic()
-        visual_keys = {"palette", "preset", "speed", "cloud_scale", "saturation", "brightness"}
+        visual_keys = {"palette", "preset", "speed", "cloud_scale", "saturation", "brightness", "style"}
         if visual_keys.intersection(changes) and "mode" not in changes:
             changes = {**changes, "mode": "manual"}
+        if changes.get("mode") == "adaptive":
+            changes = {**changes, "style": "nebula"}
         with self.lock:
             current = self._ambient_at(now)
             updated = self._validate_ambient(changes, self.ambient_target)
@@ -653,6 +657,7 @@ class RendererEngine:
                 wind_strength=ambient.get("wind_strength", 0.0),
                 life_activity=ambient.get("life_activity", 0.0),
                 life_color=ambient.get("life_color", (86, 220, 205)),
+                style=ambient.get("style", "nebula"),
             )
             rain_field = self.rain_fields[device.id]
             if rain_lanes and (layers["rain"] or rain_field.has_residue()):
@@ -858,7 +863,7 @@ class RendererEngine:
     ) -> dict[str, Any]:
         allowed = {
             "mode", "palette", "speed", "cloud_scale", "saturation",
-            "brightness", "expression", "preset",
+            "brightness", "expression", "preset", "style",
         }
         unknown = set(changes) - allowed
         if unknown:
@@ -870,6 +875,12 @@ class RendererEngine:
             result["mode"] = changes["mode"]
         if "mode" not in result:
             result["mode"] = "adaptive"
+        if "style" in changes:
+            if changes["style"] not in {"nebula", "party"}:
+                raise ValueError("ambient style must be nebula or party")
+            result["style"] = changes["style"]
+        if "style" not in result:
+            result["style"] = "nebula"
         preset = changes.get("preset")
         if preset is not None:
             if preset not in AMBIENT_PRESETS:
@@ -910,6 +921,7 @@ class RendererEngine:
                     float(self.ambient_target.get("expression", 1.0)),
                 ),
                 "mode": "adaptive",
+                "style": "nebula",
             }
             if self.ambient_target["mode"] == "adaptive"
             else dict(self.ambient_target)
@@ -933,6 +945,7 @@ class RendererEngine:
         )
         blended = {
             "mode": second["mode"],
+            "style": second.get("style", "nebula"),
             "palette": palette,
             **{
                 name: float(first[name]) + (float(second[name]) - float(first[name])) * progress
@@ -957,6 +970,7 @@ class RendererEngine:
             "saturation": round(float(ambient["saturation"]), 3),
             "brightness": round(float(ambient["brightness"]), 3),
             "expression": round(float(ambient.get("expression", 1.0)), 2),
+            "style": ambient.get("style", "nebula"),
         }
         for name in ("mood", "time_mood", "emotion", "reason"):
             if name in ambient:
@@ -974,7 +988,7 @@ class RendererEngine:
                 name: payload[name]
                 for name in (
                     "mode", "palette", "speed", "cloud_scale",
-                    "saturation", "brightness", "expression",
+                    "saturation", "brightness", "expression", "style",
                 )
             }
             temporary.write_text(

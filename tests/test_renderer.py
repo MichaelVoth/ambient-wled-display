@@ -340,6 +340,33 @@ class RendererTests(unittest.TestCase):
         self.assertNotEqual(first, later)
         self.assertGreater(len(set(first[:139])), 20)
 
+    def test_party_field_stays_vivid_and_moves_continuously(self):
+        device = self.device()
+        palette = tuple(
+            tuple(int(color[index:index + 2], 16) for index in (1, 3, 5))
+            for color in (
+                "#ff006e", "#ff2415", "#ff7a00", "#ffe600",
+                "#18f05c", "#00dcff", "#2155ff", "#8b16ff",
+            )
+        )
+        first = render_base(
+            device, 10.0, palette, 0.05, False, False,
+            cloud_scale=1.15, saturation=1.7, style="party",
+        )
+        next_frame = render_base(
+            device, 10.04, palette, 0.05, False, False,
+            cloud_scale=1.15, saturation=1.7, style="party",
+        )
+        later = render_base(
+            device, 40.0, palette, 0.05, False, False,
+            cloud_scale=1.15, saturation=1.7, style="party",
+        )
+        self.assertNotEqual(first, next_frame)
+        self.assertNotEqual(first, later)
+        vivid = sum(max(pixel) - min(pixel) >= 120 for pixel in first)
+        self.assertGreater(vivid, device.pixel_count * 0.9)
+        self.assertGreater(len(set(first[:139])), 20)
+
     def test_ambient_controls_persist_and_crossfade(self):
         with tempfile.TemporaryDirectory() as directory:
             settings_path = pathlib.Path(directory) / "ambient.json"
@@ -357,6 +384,7 @@ class RendererTests(unittest.TestCase):
                 before = engine._ambient_at(time.monotonic())
                 saved = engine.set_ambient({
                     "preset": "cosmic",
+                    "style": "party",
                     "speed": 0.006,
                     "cloud_scale": 1.6,
                     "saturation": 1.25,
@@ -367,6 +395,7 @@ class RendererTests(unittest.TestCase):
                 self.assertEqual(transition_start["speed"], before["speed"])
                 self.assertEqual(transition_end["speed"], 0.006)
                 self.assertEqual(saved["brightness"], 0.7)
+                self.assertEqual(saved["style"], "party")
                 self.assertTrue(settings_path.exists())
             finally:
                 engine.stop()
@@ -375,6 +404,7 @@ class RendererTests(unittest.TestCase):
             try:
                 self.assertEqual(restored.status()["ambient"]["speed"], 0.006)
                 self.assertEqual(restored.status()["ambient"]["cloud_scale"], 1.6)
+                self.assertEqual(restored.status()["ambient"]["style"], "party")
             finally:
                 restored.stop()
 

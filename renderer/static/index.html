@@ -247,6 +247,8 @@
           <div id="houseActivity" style="color:#d7e4f2;margin-top:3px">Breathing softly…</div>
           <div id="houseContext" style="color:#b7c7d8;margin-top:3px">Waiting for Home Assistant…</div>
         </div>
+        <button id="partyWall" class="celebration" style="width:100%;font-weight:750">Start Wild Party Wall</button>
+        <div style="color:var(--muted);font-size:12px;margin-top:7px">A persistent, full-bright flowing rainbow—bold, organic, and always changing.</div>
         <label for="ambientMode">Who chooses the palette?</label>
         <div class="row">
           <select id="ambientMode">
@@ -787,7 +789,7 @@
       const notice=document.querySelector('#ambientNotice');
       try {
         const palette=[...document.querySelectorAll('#ambientColors input')].map(input=>input.value);
-        const body={mode:'manual',palette,speed:+document.querySelector('#ambientSpeed').value,cloud_scale:+document.querySelector('#ambientScale').value,saturation:+document.querySelector('#ambientSaturation').value,brightness:+document.querySelector('#ambientBrightness').value};
+        const body={mode:'manual',style:'nebula',palette,speed:+document.querySelector('#ambientSpeed').value,cloud_scale:+document.querySelector('#ambientScale').value,saturation:+document.querySelector('#ambientSaturation').value,brightness:+document.querySelector('#ambientBrightness').value};
         const result=await api('/api/ambient',body); loadAmbient(result.ambient);
         document.querySelector('#ambientPreset').value='custom';
         notice.textContent='Nebula settings saved. Smooth transition in progress.'; notice.className='notice ok';
@@ -798,6 +800,15 @@
       try {
         const result=await api('/api/ambient',{mode:'adaptive',expression:+document.querySelector('#ambientExpression').value}); loadAmbient(result.ambient);
         notice.textContent='The house is choosing again. Time and weather will continuously shape the palette.'; notice.className='notice ok';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    };
+    document.querySelector('#partyWall').onclick=async()=>{
+      const notice=document.querySelector('#ambientNotice');
+      try {
+        await api('/api/power',{on:true});
+        const result=await api('/api/ambient',{mode:'manual',preset:'wild party',style:'party',speed:0.05,cloud_scale:1.15,saturation:1.7,brightness:1,expression:1});
+        loadAmbient(result.ambient); document.querySelector('#ambientPreset').value='wild party';
+        notice.textContent='Wild Party Wall is flowing. It will stay active until you choose another look.'; notice.className='notice ok';
       } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
     };
     document.querySelector('#ambientMode').onchange=()=>{

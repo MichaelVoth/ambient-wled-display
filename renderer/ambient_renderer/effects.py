@@ -191,6 +191,30 @@ def lava_color(
     )  # type: ignore[return-value]
 
 
+def party_color(
+    palette: tuple[RGB, ...],
+    vertical: float,
+    now: float,
+    speed: float,
+    scale_factor: float,
+    lane_number: int,
+) -> RGB:
+    """A saturated, continuously folding field without muddy color averaging."""
+    motion = now * speed
+    scale_factor = max(0.3, scale_factor)
+    # Warped coordinates make unequal color territories slowly stretch,
+    # compress, reverse, and pass through one another. Adjacent rainbow hues
+    # interpolate cleanly, so every LED stays vivid rather than averaging gray.
+    fold = (
+        vertical * (1.35 / math.sqrt(scale_factor))
+        + 0.17 * math.sin(vertical * math.tau * 1.3 + motion * 0.83 + lane_number * 0.7)
+        + 0.075 * math.sin(vertical * math.tau * 3.7 - motion * 1.31)
+        + 0.035 * math.sin(vertical * math.tau * 9.0 + motion * 0.47)
+    )
+    color_position = fold + motion * 0.19 + 0.06 * math.sin(motion * 0.29 + lane_number)
+    return palette_color(palette, color_position)
+
+
 def render_base(
     device: DeviceConfig,
     now: float,
@@ -208,6 +232,7 @@ def render_base(
     wind_strength: float = 0.0,
     life_activity: float = 0.0,
     life_color: RGB = (86, 220, 205),
+    style: str = "nebula",
 ) -> list[RGB]:
     frame = [BLACK] * device.pixel_count
     rain_lane_ids = None if rain_lanes is None else {lane.id for lane in rain_lanes}
@@ -218,13 +243,22 @@ def render_base(
         # points. This preserves small pockets while leaving frame time for
         # music, rain, and semantic layers on a Raspberry Pi.
         sample_count = max(2, math.ceil(lane.length / 3) + 1)
-        lava_samples = [
-            lava_color(
-                palette, sample / (sample_count - 1), now, palette_speed,
-                cloud_scale, lane_number, wind_strength,
-            )
-            for sample in range(sample_count)
-        ]
+        if style == "party":
+            lava_samples = [
+                party_color(
+                    palette, sample / (sample_count - 1), now,
+                    palette_speed, cloud_scale, lane_number,
+                )
+                for sample in range(sample_count)
+            ]
+        else:
+            lava_samples = [
+                lava_color(
+                    palette, sample / (sample_count - 1), now, palette_speed,
+                    cloud_scale, lane_number, wind_strength,
+                )
+                for sample in range(sample_count)
+            ]
         for absolute in range(lane.start, lane.start + lane.length):
             vertical = lane_distance_from_top(lane, absolute)
             sample_position = vertical * (sample_count - 1)

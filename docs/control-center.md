@@ -71,6 +71,12 @@ continuously rendered base.
 
 ## Ambient nebula controls
 
+**Start Wild Party Wall** switches to a persistent, full-bright color field.
+It uses an ordered electric rainbow and a separate folding renderer so colors
+stretch into unequal organic territories without averaging into gray. The
+field continuously flows at 30 FPS and is saved across restarts. Another
+manual look or **Use living house mood** replaces it with a three-second fade.
+
 The normal background is a continuous lava-lamp nebula rather than a looping
 WLED preset. Six unequal color bodies range from a tiny pocket to wider than a
 whole lane. They drift in different directions, slowly change size, overlap,
