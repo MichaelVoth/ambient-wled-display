@@ -350,22 +350,28 @@ class RendererTests(unittest.TestCase):
             )
         )
         first = render_base(
-            device, 10.0, palette, 0.05, False, False,
-            cloud_scale=1.15, saturation=1.7, style="party",
+            device, 10.0, palette, 0.018, False, False,
+            cloud_scale=1.05, saturation=1.55, style="party",
         )
         next_frame = render_base(
-            device, 10.04, palette, 0.05, False, False,
-            cloud_scale=1.15, saturation=1.7, style="party",
+            device, 10.0 + 1 / 30, palette, 0.018, False, False,
+            cloud_scale=1.05, saturation=1.55, style="party",
         )
         later = render_base(
-            device, 40.0, palette, 0.05, False, False,
-            cloud_scale=1.15, saturation=1.7, style="party",
+            device, 40.0, palette, 0.018, False, False,
+            cloud_scale=1.05, saturation=1.55, style="party",
         )
         self.assertNotEqual(first, next_frame)
         self.assertNotEqual(first, later)
         vivid = sum(max(pixel) - min(pixel) >= 120 for pixel in first)
         self.assertGreater(vivid, device.pixel_count * 0.9)
         self.assertGreater(len(set(first[:139])), 20)
+        frame_deltas = [
+            max(abs(first_channel - next_channel) for first_channel, next_channel in zip(a, b))
+            for a, b in zip(first, next_frame)
+        ]
+        self.assertGreater(sum(frame_deltas), 0)
+        self.assertLessEqual(max(frame_deltas), 3)
 
     def test_ambient_controls_persist_and_crossfade(self):
         with tempfile.TemporaryDirectory() as directory:

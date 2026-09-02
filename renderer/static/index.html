@@ -806,7 +806,7 @@
       const notice=document.querySelector('#ambientNotice');
       try {
         await api('/api/power',{on:true});
-        const result=await api('/api/ambient',{mode:'manual',preset:'wild party',style:'party',speed:0.05,cloud_scale:1.15,saturation:1.7,brightness:1,expression:1});
+        const result=await api('/api/ambient',{mode:'manual',preset:'wild party',style:'party',speed:0.018,cloud_scale:1.05,saturation:1.55,brightness:1,expression:1});
         loadAmbient(result.ambient); document.querySelector('#ambientPreset').value='wild party';
         notice.textContent='Wild Party Wall is flowing. It will stay active until you choose another look.'; notice.className='notice ok';
       } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }

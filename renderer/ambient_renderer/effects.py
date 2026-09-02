@@ -199,20 +199,47 @@ def party_color(
     scale_factor: float,
     lane_number: int,
 ) -> RGB:
-    """A saturated, continuously folding field without muddy color averaging."""
+    """Render independently drifting color bodies over a vivid broad wash."""
     motion = now * speed
     scale_factor = max(0.3, scale_factor)
-    # Warped coordinates make unequal color territories slowly stretch,
-    # compress, reverse, and pass through one another. Adjacent rainbow hues
-    # interpolate cleanly, so every LED stays vivid rather than averaging gray.
-    fold = (
-        vertical * (1.35 / math.sqrt(scale_factor))
-        + 0.17 * math.sin(vertical * math.tau * 1.3 + motion * 0.83 + lane_number * 0.7)
-        + 0.075 * math.sin(vertical * math.tau * 3.7 - motion * 1.31)
-        + 0.035 * math.sin(vertical * math.tau * 9.0 + motion * 0.47)
+    radii = (0.72, 0.47, 0.31, 0.21, 0.135, 0.082, 0.048)
+    strengths = (0.36, 0.52, 0.72, 0.96, 1.14, 1.26, 1.34)
+    weighted = [0.0, 0.0, 0.0]
+    total = 0.0
+    for blob, (radius, strength) in enumerate(zip(radii, strengths)):
+        seed = ((blob * 43 + lane_number * 31 + 17) % 101) / 101.0
+        phase = seed * math.tau
+        direction = -1.0 if blob % 2 else 1.0
+        velocity = 0.055 + blob * 0.014
+        center = (
+            seed
+            + direction * motion * velocity
+            + math.sin(motion * (0.31 + blob * 0.047) + phase) * (0.035 + blob * 0.004)
+        ) % 1.0
+        distance = min(abs(vertical - center), 1.0 - abs(vertical - center))
+        changing_radius = radius * scale_factor * (
+            0.82 + 0.24 * math.sin(motion * (0.19 + blob * 0.033) + phase)
+        )
+        influence = math.exp(-0.5 * (distance / max(0.012, changing_radius)) ** 2)
+        # A soft winner-takes-most blend keeps the colors bold while overlaps
+        # and overtakes remain smooth. The largest bodies form slow washes;
+        # small bodies bud, pass through them, and drift away.
+        weight = (influence * strength) ** 3.0
+        color = palette_color(palette, seed + blob * 0.113 + motion * (0.008 + blob * 0.0012))
+        for channel in range(3):
+            weighted[channel] += color[channel] * weight
+        total += weight
+
+    background = palette_color(palette, motion * 0.006 + lane_number * 0.07)
+    background_weight = 0.025
+    color = tuple(
+        round((weighted[channel] + background[channel] * background_weight) / (total + background_weight))
+        for channel in range(3)
     )
-    color_position = fold + motion * 0.19 + 0.06 * math.sin(motion * 0.29 + lane_number)
-    return palette_color(palette, color_position)
+    # Every hue has a bright anchor channel, preventing blue-to-yellow energy
+    # changes from reading as whole-strip flashes.
+    peak = max(color)
+    return color if peak == 0 else scale(color, 255.0 / peak)
 
 
 def render_base(
@@ -267,9 +294,8 @@ def render_base(
                 lava_samples[sample_index], lava_samples[sample_index + 1],
                 sample_position - sample_index,
             )
-            breath = (
-                1.0
-                - breath_depth
+            breath = 1.0 if style == "party" else (
+                1.0 - breath_depth
                 + breath_depth * math.sin(now * breath_rate + vertical * math.tau * 0.8)
                 + 0.012 * math.sin(now * 0.037 + lane_number * 1.7)
             )
