@@ -379,7 +379,7 @@
     </div>
     <section class="simulator">
       <h2>House light window</h2>
-      <p style="color:var(--muted);margin-top:-6px">Live view of the exact pixels being sent to the active physical lane.</p>
+      <p id="simulatorNote" style="color:var(--muted);margin-top:-6px">Live view of the exact pixels being sent to the active physical lane.</p>
       <div id="devices"></div>
     </section>
   </main>
@@ -533,6 +533,10 @@
     function draw(frames) {
       for(const canvas of document.querySelectorAll('canvas')) {
         const ctx=canvas.getContext('2d'), frame=frames[canvas.dataset.device]||[];
+        if(status?.mode==='wled') {
+          ctx.fillStyle='#05070b'; ctx.fillRect(0,0,canvas.width,canvas.height);
+          continue;
+        }
         const start=+canvas.dataset.start,length=+canvas.dataset.length,reverse=canvas.dataset.reverse==='true';
         const h=canvas.height/length; ctx.clearRect(0,0,canvas.width,canvas.height);
         for(let y=0;y<length;y++) {
@@ -678,6 +682,7 @@
         document.querySelector('#transport').textContent=device?`${device.transport} :${device.transport_port}`:'—';
         document.querySelector('#modeText').textContent=status.mode;
         document.querySelector('#mode').value=status.mode;
+        document.querySelector('#simulatorNote').textContent=status.mode==='wled'?'WLED is drawing this effect locally; its individual pixels are not available to preview here.':'Live view of the exact pixels being sent to the active physical lane.';
         document.querySelector('#eventText').textContent=status.active_event?`${status.active_event.kind}: ${status.active_event.phase}`:'None';
         document.querySelector('#liveAutomatically').classList.toggle('active',status.mode==='renderer'&&status.ambient.mode==='adaptive');
         document.querySelector('#resumeAmbient').classList.toggle('active',status.mode==='renderer'&&status.ambient.mode!=='adaptive');
