@@ -229,6 +229,7 @@
           <select id="mode">
             <option value="renderer">Renderer → WLED</option>
             <option value="preview">Simulator only</option>
+            <option value="wled">Native WLED effect</option>
             <option value="music">Legacy external music controller</option>
             <option value="off">Output stopped</option>
           </select>
@@ -247,8 +248,6 @@
           <div id="houseActivity" style="color:#d7e4f2;margin-top:3px">Breathing softly…</div>
           <div id="houseContext" style="color:#b7c7d8;margin-top:3px">Waiting for Home Assistant…</div>
         </div>
-        <button id="partyWall" class="celebration" style="width:100%;font-weight:750">Start Wild Party Wall</button>
-        <div style="color:var(--muted);font-size:12px;margin-top:7px">A persistent, full-bright flowing rainbow—bold, organic, and always changing.</div>
         <label for="ambientMode">Who chooses the palette?</label>
         <div class="row">
           <select id="ambientMode">
@@ -293,6 +292,35 @@
         <div class="row" style="margin-top:14px"><button id="applyAmbient">Use these manual colors</button></div>
         <div id="ambientNotice" class="notice">Adaptive mode evolves continuously. Manual changes crossfade over three seconds.</div>
         </details>
+      </section>
+      <section>
+        <h2>Native WLED effects</h2>
+        <p style="color:var(--muted);margin-top:-6px">Run the smooth effects built into WLED. This releases the custom renderer until you return to the living house.</p>
+        <div class="row" style="margin-bottom:12px">
+          <button class="primary" data-wled-look="blobs">Slow color blobs</button>
+          <button data-wled-look="colorwaves">Color waves</button>
+          <button data-wled-look="aurora">Aurora</button>
+          <button data-wled-look="flow">Lava flow</button>
+          <button data-wled-look="pacifica">Pacifica</button>
+        </div>
+        <div class="control-grid">
+          <label for="wledEffect">Effect</label><select id="wledEffect"></select>
+          <label for="wledPalette">Palette</label><select id="wledPalette"></select>
+          <label for="wledSpeed">Speed <output id="wledSpeedValue">128</output></label><input id="wledSpeed" type="range" min="0" max="255" value="128">
+          <label for="wledIntensity">Intensity <output id="wledIntensityValue">128</output></label><input id="wledIntensity" type="range" min="0" max="255" value="128">
+          <label for="wledBrightness">Brightness <output id="wledBrightnessValue">50%</output></label><input id="wledBrightness" type="range" min="1" max="255" value="128">
+          <label for="wledPrimary">Primary color</label><input id="wledPrimary" type="color" value="#ff00aa">
+          <label for="wledSecondary">Secondary color</label><input id="wledSecondary" type="color" value="#00ccff">
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label style="margin:0"><input id="wledReverse" type="checkbox"> Reverse</label>
+          <label style="margin:0"><input id="wledMirror" type="checkbox"> Mirror</label>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button id="applyWled" class="primary">Run this WLED effect</button>
+          <button id="resumeHouse">Return to living house</button>
+        </div>
+        <div id="wledNotice" class="notice">Loading WLED’s built-in effects…</div>
       </section>
       <section>
         <h2>Automatic instincts</h2>
@@ -360,7 +388,7 @@
     (()=>{
       const key='ambient-dashboard-layout-v2';
       const board=document.querySelector('#dashboard');
-      const definitions=[['power','Light power & brightness',340],['everyday','Everyday control',320],['music','Music lights',680],['system','System status',90],['ambient','Ambient nebula',500],['instincts','Automatic instincts',300],['phone','Phone access',190],['animations','Animations and information',490],['technical','Technical live state',90]];
+      const definitions=[['power','Light power & brightness',340],['everyday','Everyday control',320],['music','Music lights',680],['system','System status',90],['ambient','Ambient nebula',500],['wled','Native WLED effects',560],['instincts','Automatic instincts',300],['phone','Phone access',190],['animations','Animations and information',490],['technical','Technical live state',90]];
       const sections=[...board.querySelectorAll('.controls > section')];
       const preview=board.querySelector('.simulator');
       let state={layouts:{}};
@@ -484,7 +512,7 @@
     })();
   </script>
   <script>
-    let config=null,status=null,ambientInitialized=false,musicSetup=null;
+    let config=null,status=null,ambientInitialized=false,musicSetup=null,wledSetup=null;
     async function api(path, body) {
       const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
       const response=await fetch(path,options); const data=await response.json();
@@ -536,6 +564,27 @@
       document.querySelector('#ambientExpression').value=ambient.expression||1;
       document.querySelector('#manualStudio').open=ambient.mode==='manual';
       updateAmbientLabels(); ambientInitialized=true;
+    }
+    function loadWled(wled) {
+      wledSetup=wled;
+      document.querySelector('#wledEffect').value=String(wled.effect);
+      document.querySelector('#wledPalette').value=String(wled.palette);
+      document.querySelector('#wledSpeed').value=wled.speed;
+      document.querySelector('#wledIntensity').value=wled.intensity;
+      document.querySelector('#wledBrightness').value=wled.brightness;
+      document.querySelector('#wledPrimary').value=wled.colors?.[0]||'#ff00aa';
+      document.querySelector('#wledSecondary').value=wled.colors?.[1]||'#00ccff';
+      document.querySelector('#wledReverse').checked=!!wled.reverse;
+      document.querySelector('#wledMirror').checked=!!wled.mirror;
+      updateWledLabels();
+    }
+    function updateWledLabels() {
+      document.querySelector('#wledSpeedValue').textContent=document.querySelector('#wledSpeed').value;
+      document.querySelector('#wledIntensityValue').textContent=document.querySelector('#wledIntensity').value;
+      document.querySelector('#wledBrightnessValue').textContent=`${Math.round(+document.querySelector('#wledBrightness').value/255*100)}%`;
+    }
+    function wledSettings() {
+      return {on:true,effect:+document.querySelector('#wledEffect').value,palette:+document.querySelector('#wledPalette').value,speed:+document.querySelector('#wledSpeed').value,intensity:+document.querySelector('#wledIntensity').value,brightness:+document.querySelector('#wledBrightness').value,reverse:document.querySelector('#wledReverse').checked,mirror:document.querySelector('#wledMirror').checked,colors:[document.querySelector('#wledPrimary').value,document.querySelector('#wledSecondary').value,'#000000']};
     }
     function rgbHex(value,fallback) {
       if(!Array.isArray(value)||value.length!==3) return fallback;
@@ -639,7 +688,7 @@
         updateMusicControls(music);
         renderAudio(music);
         document.querySelector('#quietNow').classList.toggle('active',status.mode==='off');
-        const modeLabel=music.enabled?(music.receiving_audio?'Dancing to the music':'Music mode · waiting for audio'):{renderer:'Ambient renderer',preview:'Simulator only',music:'Legacy music controller',off:'Output quiet'}[status.mode]||status.mode;
+        const modeLabel=music.enabled?(music.receiving_audio?'Dancing to the music':'Music mode · waiting for audio'):{renderer:'Ambient renderer',preview:'Simulator only',wled:'Native WLED effect',music:'Legacy music controller',off:'Output quiet'}[status.mode]||status.mode;
         document.querySelector('#everydayState').textContent=status.active_event?`${modeLabel} · ${status.active_event.kind} (${status.active_event.phase})`:modeLabel;
         for(const button of document.querySelectorAll('[data-layer]')) button.textContent=`${button.dataset.layer==='rain'?'Rain':'Focus'}: ${status.layers[button.dataset.layer]?'on':'off'}`;
         document.querySelector('#houseEmotion').textContent=status.ambient.emotion||'Self-directed';
@@ -699,6 +748,14 @@
         const option=document.createElement('option'); option.value=name;
         option.textContent=name.charAt(0).toUpperCase()+name.slice(1); preset.appendChild(option);
       }
+      try {
+        wledSetup=await api('/api/wled');
+        const effects=document.querySelector('#wledEffect'),palettes=document.querySelector('#wledPalette');
+        effects.replaceChildren(...wledSetup.effects.map((name,index)=>new Option(name,String(index))));
+        palettes.replaceChildren(...wledSetup.palettes.map((name,index)=>new Option(name,String(index))));
+        loadWled(wledSetup);
+        document.querySelector('#wledNotice').textContent=`Ready: ${wledSetup.effects.length} effects and ${wledSetup.palettes.length} palettes from ${wledSetup.device}.`;
+      } catch(error) { document.querySelector('#wledNotice').textContent=error.message; document.querySelector('#wledNotice').className='notice bad'; }
       await refresh(); setInterval(refresh,1000); setInterval(refreshLive,33);
     }
     document.querySelector('#setMode').onclick=()=>action(()=>api('/api/mode',{mode:document.querySelector('#mode').value}),'Output mode updated.');
@@ -802,15 +859,22 @@
         notice.textContent='The house is choosing again. Time and weather will continuously shape the palette.'; notice.className='notice ok';
       } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
     };
-    document.querySelector('#partyWall').onclick=async()=>{
-      const notice=document.querySelector('#ambientNotice');
-      try {
-        await api('/api/power',{on:true});
-        const result=await api('/api/ambient',{mode:'manual',preset:'wild party',style:'party',speed:0.018,cloud_scale:1.05,saturation:1.55,brightness:1,expression:1});
-        loadAmbient(result.ambient); document.querySelector('#ambientPreset').value='wild party';
-        notice.textContent='Wild Party Wall is flowing. It will stay active until you choose another look.'; notice.className='notice ok';
-      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    for(const slider of document.querySelectorAll('#wledSpeed,#wledIntensity,#wledBrightness')) slider.oninput=updateWledLabels;
+    async function applyWled(body,success) {
+      const notice=document.querySelector('#wledNotice');
+      try { const result=await api('/api/wled',body); loadWled(result.wled); notice.textContent=success; notice.className='notice ok'; await refresh(); }
+      catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    }
+    document.querySelector('#applyWled').onclick=()=>applyWled(wledSettings(),'WLED is running this effect. The settings are shown above.');
+    const wledLooks={
+      blobs:{effect:'Blends',palette:'Party',speed:38,intensity:175,brightness:180},
+      colorwaves:{effect:'Colorwaves',palette:'Party',speed:55,intensity:190,brightness:180},
+      aurora:{effect:'Aurora',palette:'Aurora',speed:48,intensity:165,brightness:170},
+      flow:{effect:'Flow',palette:'Lava',speed:42,intensity:185,brightness:180},
+      pacifica:{effect:'Pacifica',palette:'Ocean',speed:52,intensity:175,brightness:165}
     };
+    for(const button of document.querySelectorAll('[data-wled-look]')) button.onclick=()=>applyWled({on:true,...wledLooks[button.dataset.wledLook]},`${button.textContent} is running directly in WLED.`);
+    document.querySelector('#resumeHouse').onclick=()=>document.querySelector('#liveAutomatically').click();
     document.querySelector('#ambientMode').onchange=()=>{
       if(document.querySelector('#ambientMode').value==='adaptive') document.querySelector('#useAdaptive').click();
       else document.querySelector('#ambientNotice').textContent='Choose a look or adjust the colors, then select “Use these manual colors.”';

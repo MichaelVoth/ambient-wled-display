@@ -108,6 +108,48 @@ class PowerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.engine.set_power(brightness=value)
 
+    def test_native_wled_effect_releases_renderer_and_survives_restart(self):
+        state = {
+            "on": True, "bri": 128, "mainseg": 0,
+            "seg": [{
+                "id": 0, "len": 139, "fx": 0, "pal": 0, "sx": 128, "ix": 128,
+                "rev": False, "mi": False,
+                "col": [[255, 160, 0], [0, 0, 0], [0, 0, 0]],
+            }],
+        }
+        effects = ["Solid", "Blends", "Aurora"]
+        palettes = ["Default", "Party", "Ocean"]
+
+        def native_state(device, payload=None):
+            if payload:
+                state["on"] = payload["on"]
+                state["bri"] = payload["bri"]
+                state["seg"][0].update(payload["seg"])
+            return state
+
+        self.engine._wled_state = native_state
+        self.engine._wled_json = lambda device, path: effects if path == "/json/eff" else palettes
+        result = self.engine.set_native_wled({
+            "effect": "Blends", "palette": "Party", "speed": 38,
+            "intensity": 175, "brightness": 180,
+        })
+        self.assertEqual(self.engine.mode, "wled")
+        self.assertEqual(result["effect_name"], "Blends")
+        self.assertEqual(result["palette_name"], "Party")
+        self.assertEqual(state["seg"][0]["sx"], 38)
+
+        restored = RendererEngine(self.config)
+        try:
+            self.assertEqual(restored.mode, "wled")
+        finally:
+            restored.stop()
+
+        self.assertTrue(self.engine.trigger_hour(3, take_output=True)["accepted"])
+        self.assertEqual(self.engine.mode, "renderer")
+        self.assertEqual(self.engine.return_mode_after_events, "wled")
+        self.engine.cancel_event()
+        self.assertEqual(self.engine.mode, "wled")
+
 
 if __name__ == "__main__":
     unittest.main()

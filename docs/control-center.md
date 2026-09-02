@@ -51,6 +51,8 @@ complete and can be retried. Manual controls omit `morning`.
 ## Output modes
 
 - **Renderer → WLED** continuously sends the composed ambient display to WLED.
+- **Native WLED effect** releases realtime ownership and lets WLED run one of
+  its built-in effects locally.
 - **Simulator only** keeps rendering the preview but sends no physical frames.
 - **Legacy external music controller** is retained only as a recovery option.
 - **Output stopped** is an administrative stopped state.
@@ -70,13 +72,6 @@ demonstrates priority replacement. **Cancel** returns immediately to the
 continuously rendered base.
 
 ## Ambient nebula controls
-
-**Start Wild Party Wall** switches to a persistent, full-bright color field.
-It uses an ordered electric rainbow and independently drifting large, medium,
-and small color bodies. A steady broad wash sits behind blobs that bud,
-overlap, overtake one another, and drift away without global brightness pulses.
-The field continuously flows at 30 FPS and is saved across restarts. Another
-manual look or **Use living house mood** replaces it with a three-second fade.
 
 The normal background is a continuous lava-lamp nebula rather than a looping
 WLED preset. Six unequal color bodies range from a tiny pocket to wider than a
@@ -119,6 +114,19 @@ manual colors**. The old and new configurations crossfade over three seconds. Th
 result is stored in the renderer data volume and survives service, Pi, and Home
 Assistant restarts. Rain, hourly tolls, and semantic signals are composited on
 top of the chosen nebula.
+
+## Native WLED effects
+
+This card reads its effect and palette menus directly from the connected WLED
+controller. It exposes effect, palette, speed, intensity, brightness, two
+colors, reverse, and mirror controls. The shortcuts provide slower,
+non-strobing starting points: Slow color blobs, Color waves, Aurora, Lava flow,
+and Pacifica.
+
+Running a native effect stops realtime frame transmission before applying the
+selection. The hourly clock can temporarily borrow the strip, then releases it
+back to the same native effect. **Return to living house** restores the custom
+renderer and its Home Assistant layers.
 
 ## API examples
 

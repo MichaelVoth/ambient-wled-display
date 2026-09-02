@@ -90,6 +90,8 @@ class RendererHandler(BaseHTTPRequestHandler):
             })
         elif path == "/api/ambient":
             self._json(self.server.engine.status()["ambient"])
+        elif path == "/api/wled":
+            self._json(self.server.engine.native_wled_status())
         elif path == "/api/music":
             music = self.server.engine.music_status()
             try:
@@ -212,6 +214,8 @@ class RendererHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "music": music, "companion": companion})
             elif path == "/api/ambient":
                 self._json({"ok": True, "ambient": self.server.engine.set_ambient(body)})
+            elif path == "/api/wled":
+                self._json({"ok": True, "wled": self.server.engine.set_native_wled(body)})
             elif path == "/api/context":
                 self._json({"ok": True, "context": self.server.engine.set_context(body)})
             else:

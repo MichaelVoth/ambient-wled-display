@@ -99,6 +99,7 @@ class RendererEngine:
         self.master_brightness = 1.0
         self.morning_date = None
         self.power_persisted = False
+        saved_mode = None
         try:
             saved_power = json.loads(self.power_path.read_text(encoding="utf-8"))
             if not isinstance(saved_power["on"], bool):
@@ -109,6 +110,9 @@ class RendererEngine:
             self.power_on = saved_power["on"]
             self.master_brightness = level
             self.morning_date = saved_power.get("morning_date")
+            saved_mode = saved_power.get("mode")
+            if saved_mode not in {None, "renderer", "wled", "off"}:
+                raise ValueError("invalid saved output mode")
             self.power_persisted = True
         except FileNotFoundError:
             pass
@@ -122,6 +126,8 @@ class RendererEngine:
         self.mode = "renderer" if config.output_enabled else "preview"
         if not self.power_on:
             self.mode = "off"
+        elif saved_mode == "wled":
+            self.mode = "wled"
         self.layers = {
             "rain": self.context["weather"] in {"rainy", "pouring", "lightning-rainy", "snowy-rainy", "hail"},
             "focus": False,
@@ -216,8 +222,8 @@ class RendererEngine:
         self._record("renderer_stopped")
 
     def set_mode(self, mode: str) -> None:
-        if mode not in {"renderer", "preview", "music", "off"}:
-            raise ValueError("mode must be renderer, preview, music, or off")
+        if mode not in {"renderer", "preview", "wled", "music", "off"}:
+            raise ValueError("mode must be renderer, preview, wled, music, or off")
         if mode == "off":
             self.set_power(on=False)
             return
@@ -247,10 +253,120 @@ class RendererEngine:
         except (OSError, ValueError) as exc:
             raise ValueError(f"{device.name}: could not confirm power: {exc}") from exc
 
+    @staticmethod
+    def _wled_json(device: Any, path: str) -> Any:
+        try:
+            with urllib.request.urlopen(f"http://{device.host}{path}", timeout=2.0) as response:
+                return json.load(response)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{device.name}: could not read WLED controls: {exc}") from exc
+
+    def native_wled_status(self) -> dict[str, Any]:
+        device = self.config.devices[0]
+        state = self._wled_state(device)
+        effects = self._wled_json(device, "/json/eff")
+        palettes = self._wled_json(device, "/json/pal")
+        segments = state.get("seg") or []
+        segment = next((item for item in segments if item.get("id") == state.get("mainseg", 0)), None)
+        if not isinstance(effects, list) or not isinstance(palettes, list) or not isinstance(segment, dict):
+            raise ValueError(f"{device.name}: WLED returned incomplete effect controls")
+        colors = segment.get("col") or []
+        return {
+            "active": self.mode == "wled",
+            "device": device.name,
+            "on": bool(state.get("on", True)),
+            "brightness": int(state.get("bri", 128)),
+            "effect": int(segment.get("fx", 0)),
+            "effect_name": effects[int(segment.get("fx", 0))],
+            "effects": effects,
+            "palette": int(segment.get("pal", 0)),
+            "palette_name": palettes[int(segment.get("pal", 0))],
+            "palettes": palettes,
+            "speed": int(segment.get("sx", 128)),
+            "intensity": int(segment.get("ix", 128)),
+            "reverse": bool(segment.get("rev", False)),
+            "mirror": bool(segment.get("mi", False)),
+            "colors": ["#%02x%02x%02x" % tuple(color[:3]) for color in colors[:3]],
+            "segment_length": int(segment.get("len", device.pixel_count)),
+        }
+
+    def set_native_wled(self, changes: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"on", "brightness", "effect", "palette", "speed", "intensity", "reverse", "mirror", "colors"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown WLED controls: " + ", ".join(sorted(unknown)))
+        device = self.config.devices[0]
+        current = self.native_wled_status()
+
+        def index_for(kind: str, choices: list[str]) -> int:
+            value = changes.get(kind, current[kind])
+            if isinstance(value, str) and not value.isdigit():
+                matches = [index for index, name in enumerate(choices) if name.casefold() == value.casefold()]
+                if not matches:
+                    raise ValueError(f"unknown WLED {kind} {value!r}")
+                return matches[0]
+            index = int(value)
+            if not 0 <= index < len(choices):
+                raise ValueError(f"WLED {kind} is out of range")
+            return index
+
+        effect = index_for("effect", current["effects"])
+        palette = index_for("palette", current["palettes"])
+        values = {}
+        for name in ("brightness", "speed", "intensity"):
+            value = int(changes.get(name, current[name]))
+            low = 1 if name == "brightness" else 0
+            if not low <= value <= 255:
+                raise ValueError(f"WLED {name} must be between {low} and 255")
+            values[name] = value
+        colors = changes.get("colors", current["colors"])
+        if not isinstance(colors, (list, tuple)) or not 1 <= len(colors) <= 3:
+            raise ValueError("WLED colors must contain one to three colors")
+        parsed_colors = [list(parse_hex(str(color))) for color in colors]
+        while len(parsed_colors) < 3:
+            parsed_colors.append([0, 0, 0])
+        on = changes.get("on", True)
+        reverse = changes.get("reverse", current["reverse"])
+        mirror = changes.get("mirror", current["mirror"])
+        if not all(isinstance(value, bool) for value in (on, reverse, mirror)):
+            raise ValueError("WLED on, reverse, and mirror must be true or false")
+        payload = {
+            "on": on,
+            "bri": values["brightness"],
+            "transition": 7,
+            "live": False,
+            "lor": 0,
+            "seg": {
+                "id": 0, "on": on, "fx": effect, "pal": palette,
+                "sx": values["speed"], "ix": values["intensity"],
+                "rev": reverse, "mi": mirror, "col": parsed_colors,
+            },
+        }
+        with self.output_lock:
+            with self.lock:
+                previous_mode = self.mode
+                self.mode = "wled" if on else "off"
+                self.power_on = on
+                self.music_enabled = False
+                self.active_event = None
+                self.event_queue.clear()
+                self.return_mode_after_events = None
+            try:
+                self._wled_state(device, payload)
+            except ValueError:
+                with self.lock:
+                    self.mode = previous_mode
+                raise
+            self._persist_power()
+        self._record("native_wled_changed", effect=current["effects"][effect], palette=current["palettes"][palette])
+        # WLED may need a fraction of a second to release realtime ownership.
+        time.sleep(0.08)
+        return self.native_wled_status()
+
     def power_status(self) -> dict[str, Any]:
         with self.lock:
             return {"on": self.power_on, "brightness": self.master_brightness,
-                    "morning_date": self.morning_date}
+                    "morning_date": self.morning_date, "mode": self.mode}
 
     def _persist_power(self) -> None:
         try:
@@ -501,12 +617,12 @@ class RendererEngine:
             current_mode = self.mode
         if current_mode in {"music", "off"}:
             raise ValueError(f"renderer is in {current_mode} mode")
-        if current_mode == "preview":
+        if current_mode in {"preview", "wled"}:
             self._validate_outputs()
             with self.lock:
                 self.mode = "renderer"
-                self.return_mode_after_events = "preview"
-            self._record("output_lease_started", return_mode="preview")
+                self.return_mode_after_events = current_mode
+            self._record("output_lease_started", return_mode=current_mode)
 
     def trigger_alert(
         self,
