@@ -1,0 +1,1279 @@
+"""Threaded renderer, event arbitration, state, and DDP frame delivery."""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+import threading
+import time
+import urllib.request
+from collections import deque
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any
+
+from .color import RGB, mix, palette_color, parse_hex, scale, smoothstep
+from .config import RendererConfig
+from .effects import (
+    AlertEvent,
+    HourEvent,
+    SignalEvent,
+    render_alert,
+    render_base,
+    render_hour,
+    render_signal,
+)
+from .output import create_output
+from .mood import adaptive_ambient
+from .music import MUSIC_EFFECTS, render_music
+from .rain import RainField
+
+
+LOGGER = logging.getLogger(__name__)
+
+AMBIENT_PRESETS = {
+    "living": ["#16067a", "#006ee8", "#00dca6", "#36e848", "#f5cf11", "#ff4d15", "#e71caf", "#6d1fe1"],
+    "ocean": ["#03106b", "#006ccf", "#00cbd8", "#00e38f", "#2153c9"],
+    "aurora": ["#13077d", "#0757dc", "#00d5b0", "#35f064", "#bb24e8"],
+    "cosmic": ["#110052", "#4620d4", "#e616cf", "#008bea", "#00e8c2"],
+    "sunset": ["#18107e", "#a018b5", "#f01979", "#ff5318", "#ffb817"],
+    "ember": ["#3f0012", "#a40723", "#f22918", "#ff7911", "#ffc11a"],
+    "electric garden": ["#10106f", "#7030df", "#ec19cb", "#ff3c17", "#ff9d00", "#35ef31", "#00cfe8"],
+    "wild party": ["#ff006e", "#ff2415", "#ff7a00", "#ffe600", "#18f05c", "#00dcff", "#2155ff", "#8b16ff"],
+}
+
+
+class RendererEngine:
+    def __init__(self, config: RendererConfig) -> None:
+        self.config = config
+        self.log_path = Path(config.log_path)
+        self.settings_path = Path(config.settings_path)
+        initial_ambient = self._validate_ambient({
+            "mode": "adaptive",
+            "palette": list(config.palette),
+            "speed": config.palette_speed,
+            "cloud_scale": config.cloud_scale,
+            "saturation": config.saturation,
+            "brightness": config.ambient_brightness,
+            "expression": 1.0,
+            "style": "nebula",
+        })
+        try:
+            persisted = json.loads(self.settings_path.read_text(encoding="utf-8"))
+            initial_ambient = self._validate_ambient(persisted, initial_ambient)
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            LOGGER.warning("could not load ambient settings: %s", exc)
+        self.ambient_target = initial_ambient
+        self.ambient_from = initial_ambient
+        self.ambient_changed_at = time.monotonic() - 3.0
+        self.ambient_transition = 3.0
+        self.context_path = self.settings_path.with_name("house-context.json")
+        self.context = {
+            "weather": "unknown",
+            "temperature": None,
+            "temperature_unit": "°F",
+            "humidity": None,
+            "cloud_coverage": None,
+            "wind_speed": None,
+            "sun_elevation": None,
+            "presence": "unknown",
+            "timezone": "UTC",
+            "updated_at": None,
+        }
+        try:
+            persisted_context = json.loads(self.context_path.read_text(encoding="utf-8"))
+            self.context = self._validate_context(persisted_context, self.context)
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            LOGGER.warning("could not load house context: %s", exc)
+        self.lock = threading.RLock()
+        self.output_lock = threading.RLock()
+        self.power_path = self.settings_path.with_name("display-settings.json")
+        self.power_on = True
+        self.master_brightness = 1.0
+        self.morning_date = None
+        self.power_persisted = False
+        saved_mode = None
+        try:
+            saved_power = json.loads(self.power_path.read_text(encoding="utf-8"))
+            if not isinstance(saved_power["on"], bool):
+                raise ValueError("invalid saved power state")
+            level = float(saved_power["brightness"])
+            if not 0.01 <= level <= 1.0:
+                raise ValueError("invalid saved brightness")
+            self.power_on = saved_power["on"]
+            self.master_brightness = level
+            self.morning_date = saved_power.get("morning_date")
+            saved_mode = saved_power.get("mode")
+            if saved_mode not in {None, "renderer", "wled", "off"}:
+                raise ValueError("invalid saved output mode")
+            self.power_persisted = True
+        except FileNotFoundError:
+            pass
+        except (KeyError, OSError, ValueError, TypeError) as exc:
+            LOGGER.warning("could not load display settings: %s", exc)
+        self.brightness_from = self.master_brightness
+        self.brightness_changed_at = time.monotonic() - 1.0
+        self.stop_event = threading.Event()
+        self.thread: threading.Thread | None = None
+        self.monitor_thread: threading.Thread | None = None
+        self.mode = "renderer" if config.output_enabled else "preview"
+        if not self.power_on:
+            self.mode = "off"
+        elif saved_mode == "wled":
+            self.mode = "wled"
+        self.layers = {
+            "rain": self.context["weather"] in {"rainy", "pouring", "lightning-rainy", "snowy-rainy", "hail"},
+            "focus": False,
+        }
+        self.layer_targets: dict[str, tuple[str, ...] | None] = {"rain": None, "focus": None}
+        self.active_event: HourEvent | AlertEvent | SignalEvent | None = None
+        self.event_queue: deque[HourEvent | AlertEvent | SignalEvent] = deque()
+        self.frames: dict[str, list[RGB]] = {
+            device.id: [(0, 0, 0)] * device.pixel_count for device in config.devices
+        }
+        self.rain_fields = {
+            device.id: RainField(seed=sum(ord(character) for character in device.id) or 1)
+            for device in config.devices
+        }
+        self.outputs = {device.id: create_output(device) for device in config.devices}
+        self.frames_rendered = 0
+        self.frames_sent = 0
+        self.bytes_sent = 0
+        self.deadline_misses = 0
+        self.frame_times: deque[float] = deque(maxlen=max(120, config.fps * 10))
+        self.send_durations: deque[float] = deque(maxlen=max(120, config.fps * 10))
+        self.started_at = time.monotonic()
+        self.last_frame_at = 0.0
+        self.last_error: str | None = None
+        self.output_error: str | None = None
+        self.last_event: dict[str, Any] | None = None
+        self.return_mode_after_events: str | None = None
+        self.output_validation: dict[str, dict[str, Any]] = {}
+        self.receiver_status: dict[str, dict[str, Any]] = {}
+        self.last_phase_key: tuple[int, str] | None = None
+        self.music_companion_url = config.music_companion_url
+        self.music_enabled = False
+        self.music_effect = "meter"
+        self.music_background = 0.42
+        self.music_sensitivity = 0.22
+        self.music_color_mode = "cycle"
+        self.music_primary = (0, 190, 255)
+        self.music_accent = (255, 32, 170)
+        self.music_motion_speed = 0.75
+        self.audio_features = {
+            "bass": 0.0,
+            "mid": 0.0,
+            "treble": 0.0,
+            "energy": 0.0,
+            "beat": 0.0,
+            "phase": 0.0,
+            "source_fps": 0.0,
+        }
+        self.audio_updated_at = 0.0
+
+    def start(self) -> None:
+        if self.thread and self.thread.is_alive():
+            return
+        if self.mode == "renderer":
+            try:
+                self._validate_outputs()
+            except ValueError as exc:
+                self.mode = "preview"
+                self.output_error = str(exc)
+                self._record("startup_output_rejected", error=self.output_error)
+        if self.config.output_enabled:
+            try:
+                if self.power_persisted:
+                    self.set_power(on=self.power_on)
+                else:
+                    # First installation adopts actual hardware power; sending
+                    # frames alone is not proof that the strip is switched on.
+                    states = [self._wled_state(device) for device in self.config.devices]
+                    if not all(state.get("on") for state in states):
+                        self.set_power(on=False)
+            except ValueError as exc:
+                self.output_error = str(exc)
+        self.stop_event.clear()
+        self.thread = threading.Thread(target=self._run, name="ambient-renderer", daemon=True)
+        self.thread.start()
+        self.monitor_thread = threading.Thread(
+            target=self._monitor_outputs,
+            name="ambient-output-monitor",
+            daemon=True,
+        )
+        self.monitor_thread.start()
+        self._record("renderer_started", mode=self.mode, fps=self.config.fps)
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        if self.thread:
+            self.thread.join(timeout=3)
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=3)
+        for output in self.outputs.values():
+            output.close()
+        self._record("renderer_stopped")
+
+    def set_mode(self, mode: str) -> None:
+        if mode not in {"renderer", "preview", "wled", "music", "off"}:
+            raise ValueError("mode must be renderer, preview, wled, music, or off")
+        if mode == "off":
+            self.set_power(on=False)
+            return
+        with self.lock:
+            current_mode = self.mode
+        if mode == "renderer" and current_mode != "renderer":
+            self._validate_outputs()
+        with self.lock:
+            self.mode = mode
+            self.return_mode_after_events = None
+            if mode in {"music", "off"}:
+                self.music_enabled = False
+                self.active_event = None
+                self.event_queue.clear()
+        self._record("mode_changed", mode=mode)
+
+    @staticmethod
+    def _wled_state(device: Any, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        request = urllib.request.Request(
+            f"http://{device.host}/json/state",
+            data=None if payload is None else json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=2.0) as response:
+                return json.load(response)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{device.name}: could not confirm power: {exc}") from exc
+
+    @staticmethod
+    def _wled_json(device: Any, path: str) -> Any:
+        try:
+            with urllib.request.urlopen(f"http://{device.host}{path}", timeout=2.0) as response:
+                return json.load(response)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"{device.name}: could not read WLED controls: {exc}") from exc
+
+    def native_wled_status(self) -> dict[str, Any]:
+        device = self.config.devices[0]
+        state = self._wled_state(device)
+        effects = self._wled_json(device, "/json/eff")
+        palettes = self._wled_json(device, "/json/pal")
+        segments = state.get("seg") or []
+        segment = next((item for item in segments if item.get("id") == state.get("mainseg", 0)), None)
+        if not isinstance(effects, list) or not isinstance(palettes, list) or not isinstance(segment, dict):
+            raise ValueError(f"{device.name}: WLED returned incomplete effect controls")
+        colors = segment.get("col") or []
+        return {
+            "active": self.mode == "wled",
+            "device": device.name,
+            "on": bool(state.get("on", True)),
+            "brightness": int(state.get("bri", 128)),
+            "effect": int(segment.get("fx", 0)),
+            "effect_name": effects[int(segment.get("fx", 0))],
+            "effects": effects,
+            "palette": int(segment.get("pal", 0)),
+            "palette_name": palettes[int(segment.get("pal", 0))],
+            "palettes": palettes,
+            "speed": int(segment.get("sx", 128)),
+            "intensity": int(segment.get("ix", 128)),
+            "reverse": bool(segment.get("rev", False)),
+            "mirror": bool(segment.get("mi", False)),
+            "colors": ["#%02x%02x%02x" % tuple(color[:3]) for color in colors[:3]],
+            "segment_length": int(segment.get("len", device.pixel_count)),
+        }
+
+    def set_native_wled(self, changes: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"on", "brightness", "effect", "palette", "speed", "intensity", "reverse", "mirror", "colors"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown WLED controls: " + ", ".join(sorted(unknown)))
+        device = self.config.devices[0]
+        current = self.native_wled_status()
+
+        def index_for(kind: str, choices: list[str]) -> int:
+            value = changes.get(kind, current[kind])
+            if isinstance(value, str) and not value.isdigit():
+                matches = [index for index, name in enumerate(choices) if name.casefold() == value.casefold()]
+                if not matches:
+                    raise ValueError(f"unknown WLED {kind} {value!r}")
+                return matches[0]
+            index = int(value)
+            if not 0 <= index < len(choices):
+                raise ValueError(f"WLED {kind} is out of range")
+            return index
+
+        effect = index_for("effect", current["effects"])
+        palette = index_for("palette", current["palettes"])
+        values = {}
+        for name in ("brightness", "speed", "intensity"):
+            value = int(changes.get(name, current[name]))
+            low = 1 if name == "brightness" else 0
+            if not low <= value <= 255:
+                raise ValueError(f"WLED {name} must be between {low} and 255")
+            values[name] = value
+        colors = changes.get("colors", current["colors"])
+        if not isinstance(colors, (list, tuple)) or not 1 <= len(colors) <= 3:
+            raise ValueError("WLED colors must contain one to three colors")
+        parsed_colors = [list(parse_hex(str(color))) for color in colors]
+        while len(parsed_colors) < 3:
+            parsed_colors.append([0, 0, 0])
+        on = changes.get("on", True)
+        reverse = changes.get("reverse", current["reverse"])
+        mirror = changes.get("mirror", current["mirror"])
+        if not all(isinstance(value, bool) for value in (on, reverse, mirror)):
+            raise ValueError("WLED on, reverse, and mirror must be true or false")
+        payload = {
+            "on": on,
+            "bri": values["brightness"],
+            "transition": 7,
+            "live": False,
+            "lor": 0,
+            "seg": {
+                "id": 0, "on": on, "fx": effect, "pal": palette,
+                "sx": values["speed"], "ix": values["intensity"],
+                "rev": reverse, "mi": mirror, "col": parsed_colors,
+            },
+        }
+        with self.output_lock:
+            with self.lock:
+                previous_mode = self.mode
+                self.mode = "wled" if on else "off"
+                self.power_on = on
+                self.music_enabled = False
+                self.active_event = None
+                self.event_queue.clear()
+                self.return_mode_after_events = None
+            try:
+                self._wled_state(device, payload)
+            except ValueError:
+                with self.lock:
+                    self.mode = previous_mode
+                raise
+            self._persist_power()
+        self._record("native_wled_changed", effect=current["effects"][effect], palette=current["palettes"][palette])
+        # WLED may need a fraction of a second to release realtime ownership.
+        time.sleep(0.08)
+        return self.native_wled_status()
+
+    def power_status(self) -> dict[str, Any]:
+        with self.lock:
+            return {"on": self.power_on, "brightness": self.master_brightness,
+                    "morning_date": self.morning_date, "mode": self.mode}
+
+    def _persist_power(self) -> None:
+        try:
+            self.power_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.power_path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(self.power_status()) + "\n", encoding="utf-8")
+            temporary.replace(self.power_path)
+            self.power_persisted = True
+        except OSError as exc:
+            raise ValueError(f"could not save display power settings: {exc}") from exc
+
+    def _brightness_at(self, now: float) -> float:
+        blend = smoothstep(0.0, 0.4, now - self.brightness_changed_at)
+        return self.brightness_from + (self.master_brightness - self.brightness_from) * blend
+
+    def set_power(self, on: bool | None = None, brightness: float | None = None,
+                  morning: bool = False) -> dict[str, Any]:
+        if on is not None and not isinstance(on, bool):
+            raise ValueError("on must be true or false")
+        if not isinstance(morning, bool):
+            raise ValueError("morning must be true or false")
+        if brightness is not None:
+            brightness = float(brightness)
+            if not math.isfinite(brightness) or not 0.01 <= brightness <= 1.0:
+                raise ValueError("brightness must be between 0.01 and 1.0")
+        if morning and on is not True:
+            raise ValueError("morning requires on: true")
+        with self.output_lock:
+            today = datetime.now(ZoneInfo(self.context["timezone"])).date().isoformat()
+            if morning and self.morning_date == today:
+                return {**self.power_status(), "already_applied": True}
+            if on is True:
+                self._validate_outputs()
+            if on is False:
+                with self.lock:
+                    self.power_on = False
+                    self.mode = "off"
+                    self.music_enabled = False
+                    self.active_event = None
+                    self.event_queue.clear()
+                    self.return_mode_after_events = None
+                # Persist the off intent even if a controller is unreachable.
+                self._persist_power()
+            if on is not None:
+                failures = []
+                for device in self.config.devices:
+                    try:
+                        if not on:
+                            self.outputs[device.id].send([(0, 0, 0)] * device.pixel_count)
+                        payload = {"on": on, "transition": 0, "lor": 0}
+                        if not on:
+                            payload["live"] = False
+                        self._wled_state(device, payload)
+                        observed = self._wled_state(device)
+                        if observed.get("on") is not on:
+                            raise ValueError(f"{device.name}: WLED did not confirm power {on}")
+                        with self.lock:
+                            self.receiver_status.setdefault(device.id, {}).update(
+                                {"on": observed["on"], "brightness": observed.get("bri")})
+                    except (ValueError, OSError) as exc:
+                        failures.append(str(exc))
+                if failures:
+                    self.output_error = "; ".join(failures)
+                    raise ValueError(self.output_error)
+                with self.lock:
+                    self.power_on = on
+                    self.mode = "renderer" if on else "off"
+                    self.return_mode_after_events = None
+                    self.output_error = None
+            with self.lock:
+                if brightness is not None:
+                    now = time.monotonic()
+                    self.brightness_from = self._brightness_at(now)
+                    self.master_brightness = brightness
+                    self.brightness_changed_at = now
+                if morning:
+                    self.morning_date = today
+                self._persist_power()
+            self._record("power_changed", **self.power_status(), morning=morning)
+            return self.power_status()
+
+    def set_music(
+        self,
+        enabled: bool,
+        effect: str | None = None,
+        background: float | None = None,
+        sensitivity: float | None = None,
+        color_mode: str | None = None,
+        primary: RGB | None = None,
+        accent: RGB | None = None,
+        motion_speed: float | None = None,
+    ) -> dict[str, Any]:
+        if effect is not None and effect not in MUSIC_EFFECTS:
+            raise ValueError(f"music effect must be one of: {', '.join(sorted(MUSIC_EFFECTS))}")
+        if background is not None and not 0.15 <= float(background) <= 1.0:
+            raise ValueError("music background must be between 0.15 and 1.0")
+        if sensitivity is not None and not 0.05 <= float(sensitivity) <= 1.0:
+            raise ValueError("music sensitivity must be between 0.05 and 1.0")
+        if color_mode is not None and color_mode not in {"cycle", "custom"}:
+            raise ValueError("music color mode must be cycle or custom")
+        if motion_speed is not None and not 0.1 <= float(motion_speed) <= 3.0:
+            raise ValueError("music motion speed must be between 0.1 and 3.0")
+        if enabled:
+            self.set_power(on=True)
+        with self.lock:
+            if effect is not None:
+                self.music_effect = effect
+            if background is not None:
+                self.music_background = float(background)
+            if sensitivity is not None:
+                self.music_sensitivity = float(sensitivity)
+            if color_mode is not None:
+                self.music_color_mode = color_mode
+            if primary is not None:
+                self.music_primary = primary
+            if accent is not None:
+                self.music_accent = accent
+            if motion_speed is not None:
+                self.music_motion_speed = float(motion_speed)
+            self.music_enabled = bool(enabled)
+            if enabled:
+                self.mode = "renderer"
+                self.return_mode_after_events = None
+            else:
+                self.audio_features["beat"] = 0.0
+        self._record(
+            "music_changed",
+            enabled=self.music_enabled,
+            effect=self.music_effect,
+        )
+        return self.music_status()
+
+    def update_audio(self, changes: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"bass", "mid", "treble", "energy", "beat", "phase", "source_fps"}
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown audio features: " + ", ".join(sorted(unknown)))
+        with self.lock:
+            for name in allowed:
+                if name not in changes:
+                    continue
+                value = float(changes[name])
+                if name in {"phase", "source_fps"}:
+                    self.audio_features[name] = value
+                else:
+                    self.audio_features[name] = max(0.0, min(1.0, value))
+            self.audio_updated_at = time.monotonic()
+        return self.music_status()
+
+    def music_status(self) -> dict[str, Any]:
+        now = time.monotonic()
+        with self.lock:
+            age = now - self.audio_updated_at if self.audio_updated_at else None
+            return {
+                "enabled": self.music_enabled,
+                "effect": self.music_effect,
+                "background": self.music_background,
+                "sensitivity": self.music_sensitivity,
+                "color_mode": self.music_color_mode,
+                "primary": self.music_primary,
+                "accent": self.music_accent,
+                "motion_speed": self.music_motion_speed,
+                "receiving_audio": bool(
+                    self.music_enabled and age is not None and age < 1.2
+                ),
+                "audio_age_ms": None if age is None else round(age * 1000),
+                "features": dict(self.audio_features),
+            }
+
+    def register_music_companion(self, host: str, port: int) -> str:
+        if not 1 <= port <= 65535:
+            raise ValueError("music companion port is invalid")
+        with self.lock:
+            self.music_companion_url = f"http://{host}:{port}"
+        self._record("music_companion_registered", url=self.music_companion_url)
+        return self.music_companion_url
+
+    def set_layer(self, name: str, enabled: bool, targets: list[str] | tuple[str, ...] | None = None) -> None:
+        if name not in self.layers:
+            raise ValueError(f"unknown layer {name!r}")
+        normalized_targets = self._normalize_targets(targets)
+        with self.lock:
+            self.layers[name] = bool(enabled)
+            self.layer_targets[name] = normalized_targets
+        self._record(
+            "layer_changed",
+            layer=name,
+            enabled=bool(enabled),
+            targets=normalized_targets,
+        )
+
+    def set_ambient(self, changes: dict[str, Any]) -> dict[str, Any]:
+        now = time.monotonic()
+        visual_keys = {"palette", "preset", "speed", "cloud_scale", "saturation", "brightness", "style"}
+        if visual_keys.intersection(changes) and "mode" not in changes:
+            changes = {**changes, "mode": "manual"}
+        if changes.get("mode") == "adaptive":
+            changes = {**changes, "style": "nebula"}
+        with self.lock:
+            current = self._ambient_at(now)
+            updated = self._validate_ambient(changes, self.ambient_target)
+            self.ambient_from = current
+            self.ambient_target = updated
+            self.ambient_changed_at = now
+        self._persist_ambient(updated)
+        self._record("ambient_changed", ambient=self._ambient_json(updated))
+        return self._ambient_json(updated)
+
+    def set_context(self, changes: dict[str, Any]) -> dict[str, Any]:
+        now = time.monotonic()
+        with self.lock:
+            current_ambient = self._ambient_at(now)
+            updated = self._validate_context(changes, self.context)
+            updated["updated_at"] = time.time()
+            self.context = updated
+            weather = str(updated.get("weather") or "unknown").lower()
+            raining = weather in {
+                "rainy", "pouring", "lightning-rainy", "snowy-rainy", "hail"
+            }
+            self.layers["rain"] = raining
+            if self.ambient_target["mode"] == "adaptive":
+                self.ambient_from = current_ambient
+                self.ambient_changed_at = now
+        self._persist_context(updated)
+        self._record("house_context_changed", context=updated)
+        return dict(updated)
+
+    def trigger_hour(
+        self,
+        hour: int,
+        now: float | None = None,
+        take_output: bool = False,
+        targets: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        if not 0 <= hour <= 23:
+            raise ValueError("hour must be between 0 and 23")
+        if take_output:
+            self._lease_output_for_events()
+        event = HourEvent(
+            hour=hour,
+            started_at=now if now is not None else time.monotonic(),
+            targets=self._normalize_targets(targets),
+        )
+        return self._submit_event(event)
+
+    def _lease_output_for_events(self) -> None:
+        with self.lock:
+            current_mode = self.mode
+        if current_mode in {"music", "off"}:
+            raise ValueError(f"renderer is in {current_mode} mode")
+        if current_mode in {"preview", "wled"}:
+            self._validate_outputs()
+            with self.lock:
+                self.mode = "renderer"
+                self.return_mode_after_events = current_mode
+            self._record("output_lease_started", return_mode=current_mode)
+
+    def trigger_alert(
+        self,
+        color: RGB = (255, 40, 15),
+        duration: float = 6.0,
+        targets: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        event = AlertEvent(
+            started_at=time.monotonic(),
+            color=color,
+            duration=duration,
+            targets=self._normalize_targets(targets),
+        )
+        return self._submit_event(event)
+
+    def trigger_signal(
+        self,
+        signal: str,
+        duration: float | None = None,
+        take_output: bool = False,
+        targets: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
+        if duration is not None and not 1.0 <= duration <= 60.0:
+            raise ValueError("duration must be between 1 and 60 seconds")
+        event = SignalEvent(
+            signal=signal,
+            started_at=time.monotonic(),
+            duration=duration,
+            targets=self._normalize_targets(targets),
+        )
+        if take_output:
+            self._lease_output_for_events()
+        return self._submit_event(event)
+
+    def _submit_event(self, event: HourEvent | AlertEvent | SignalEvent) -> dict[str, Any]:
+        with self.lock:
+            if self.mode in {"music", "off"}:
+                return {"accepted": False, "reason": f"renderer is in {self.mode} mode"}
+            if self.active_event is None:
+                self.active_event = event
+                disposition = "started"
+            elif event.priority >= self.active_event.priority:
+                self.last_event = self._event_summary(self.active_event, time.monotonic(), result="interrupted")
+                self.active_event = event
+                disposition = "replaced_lower_priority"
+            else:
+                self.event_queue.append(event)
+                disposition = "queued"
+        self._record("event_submitted", kind=event.kind, disposition=disposition)
+        return {"accepted": True, "disposition": disposition, "event": self._event_summary(event, time.monotonic())}
+
+    def cancel_event(self) -> None:
+        with self.lock:
+            if self.active_event:
+                self.last_event = self._event_summary(self.active_event, time.monotonic(), result="cancelled")
+            self.active_event = None
+            self.event_queue.clear()
+            released_to = self.return_mode_after_events
+            self.return_mode_after_events = None
+            if released_to:
+                self.mode = released_to
+        self._record("events_cancelled")
+        if released_to:
+            self._record("output_lease_released", mode=released_to, reason="cancelled")
+
+    def _run(self) -> None:
+        interval = 1.0 / self.config.fps
+        next_frame = time.monotonic()
+        while not self.stop_event.is_set():
+            now = time.monotonic()
+            if now < next_frame:
+                self.stop_event.wait(next_frame - now)
+                continue
+            if now - next_frame > interval * 3:
+                self.deadline_misses += max(1, int((now - next_frame) / interval))
+                next_frame = now
+            try:
+                self._render(now)
+                self.last_error = None
+            except Exception as exc:  # keep the service alive and visible on failure
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                LOGGER.exception("renderer frame failed")
+                self._record("frame_error", error=self.last_error)
+            next_frame += interval
+
+    def _render(self, now: float) -> None:
+        release_after_frame = False
+        with self.lock:
+            event = self.active_event
+            if event and event.is_complete(now):
+                self.last_event = self._event_summary(event, now, result="completed")
+                self._record("event_completed", kind=event.kind)
+                event = self.event_queue.popleft() if self.event_queue else None
+                if event:
+                    event.started_at = now
+                self.active_event = event
+                if event is None and self.return_mode_after_events:
+                    release_after_frame = True
+            layers = dict(self.layers)
+            layer_targets = dict(self.layer_targets)
+            mode = self.mode
+            ambient = self._ambient_at(now)
+            context = dict(self.context)
+            music_enabled = self.music_enabled
+            music_effect = self.music_effect
+            music_background = self.music_background
+            music_sensitivity = self.music_sensitivity
+            music_color_mode = self.music_color_mode
+            music_primary = self.music_primary
+            music_accent = self.music_accent
+            music_motion_speed = self.music_motion_speed
+            audio_features = dict(self.audio_features)
+            audio_age = now - self.audio_updated_at if self.audio_updated_at else float("inf")
+            brightness = self._brightness_at(now)
+
+        if event:
+            phase = event.phase(now)[0]
+            phase_key = (id(event), phase)
+            if phase_key != self.last_phase_key:
+                self.last_phase_key = phase_key
+                self._record(
+                    "event_phase_started",
+                    kind=event.kind,
+                    phase=phase,
+                    frame=self.frames_rendered + 1,
+                    elapsed=round(now - event.started_at, 4),
+                )
+        else:
+            self.last_phase_key = None
+
+        for device in self.config.devices:
+            rain_lanes = self._target_lanes(device, layer_targets["rain"])
+            focus_lanes = self._target_lanes(device, layer_targets["focus"])
+            frame = render_base(
+                device,
+                now,
+                ambient["palette"],
+                ambient["speed"],
+                rain=False,
+                focus=layers["focus"] and bool(focus_lanes),
+                rain_lanes=rain_lanes,
+                focus_lanes=focus_lanes,
+                cloud_scale=ambient["cloud_scale"],
+                saturation=ambient["saturation"],
+                ambient_brightness=ambient["brightness"],
+                breath_rate=ambient.get("breath_rate", 0.21),
+                breath_depth=ambient.get("breath_depth", 0.06),
+                wind_strength=ambient.get("wind_strength", 0.0),
+                life_activity=ambient.get("life_activity", 0.0),
+                life_color=ambient.get("life_color", (86, 220, 205)),
+                style=ambient.get("style", "nebula"),
+            )
+            rain_field = self.rain_fields[device.id]
+            if rain_lanes and (layers["rain"] or rain_field.has_residue()):
+                frame = self.rain_fields[device.id].render(
+                    frame,
+                    device,
+                    now,
+                    rain_lanes,
+                    self._rain_intensity(context) if layers["rain"] else 0.0,
+                )
+            if music_enabled:
+                if audio_age > 1.2:
+                    faded = dict(audio_features)
+                    fade = max(0.0, 1.0 - (audio_age - 1.2) / 1.5)
+                    for name in ("bass", "mid", "treble", "energy", "beat"):
+                        faded[name] *= fade
+                    audio_features = faded
+                frame = render_music(
+                    frame, device, now, audio_features, music_effect,
+                    background_level=music_background,
+                    sensitivity=music_sensitivity,
+                    color_mode=music_color_mode,
+                    primary=music_primary,
+                    accent=music_accent,
+                    motion_speed=music_motion_speed,
+                )
+            if isinstance(event, HourEvent):
+                target_lanes = self._target_lanes(device, event.targets)
+                if target_lanes:
+                    frame = render_hour(frame, device, event, now, target_lanes)
+            elif isinstance(event, AlertEvent):
+                target_lanes = self._target_lanes(device, event.targets)
+                if target_lanes:
+                    frame = render_alert(frame, device, event, now, target_lanes)
+            elif isinstance(event, SignalEvent):
+                target_lanes = self._target_lanes(device, event.targets)
+                if target_lanes:
+                    frame = render_signal(frame, device, event, now, target_lanes)
+            frame = [scale(pixel, brightness) for pixel in frame]
+            with self.output_lock:
+                # Recheck power after drawing so an in-flight frame cannot
+                # turn the strip back on after an Off request.
+                if not self.power_on:
+                    frame = [(0, 0, 0)] * device.pixel_count
+                self.frames[device.id] = frame
+                if mode == "renderer" and self.mode == "renderer" and self.power_on:
+                    send_started = time.monotonic()
+                    sent = self.outputs[device.id].send(frame)
+                    self.send_durations.append(time.monotonic() - send_started)
+                    self.bytes_sent += int(sent or 0)
+                    self.frames_sent += 1
+        self.frames_rendered += 1
+        self.last_frame_at = now
+        self.frame_times.append(now)
+        if release_after_frame:
+            with self.lock:
+                released_to = self.return_mode_after_events
+                self.return_mode_after_events = None
+                if released_to:
+                    self.mode = released_to
+            self._record("output_lease_released", mode=released_to)
+
+    def _event_summary(
+        self,
+        event: HourEvent | AlertEvent | SignalEvent,
+        now: float,
+        result: str | None = None,
+    ) -> dict[str, Any]:
+        phase, progress = event.phase(now)
+        summary: dict[str, Any] = {
+            "kind": event.kind,
+            "priority": event.priority,
+            "phase": phase,
+            "progress": round(progress, 4),
+        }
+        if isinstance(event, HourEvent):
+            summary["hour"] = event.hour
+            summary["count"] = event.count
+        elif isinstance(event, SignalEvent):
+            summary["signal"] = event.signal
+            summary["duration"] = event.duration
+        summary["targets"] = list(event.targets) if event.targets else "all"
+        if result:
+            summary["result"] = result
+        return summary
+
+    def status(self) -> dict[str, Any]:
+        now = time.monotonic()
+        with self.lock:
+            recent_times = [stamp for stamp in self.frame_times if now - stamp <= 5.0]
+            recent_fps = 0.0
+            intervals: list[float] = []
+            if len(recent_times) > 1:
+                intervals = [
+                    current - previous
+                    for previous, current in zip(recent_times, recent_times[1:])
+                ]
+                recent_fps = (len(recent_times) - 1) / max(
+                    0.001, recent_times[-1] - recent_times[0]
+                )
+            sorted_intervals = sorted(intervals)
+            p95_interval = (
+                sorted_intervals[min(len(sorted_intervals) - 1, int(len(sorted_intervals) * 0.95))]
+                if sorted_intervals
+                else 0.0
+            )
+            sorted_sends = sorted(self.send_durations)
+            p95_send = (
+                sorted_sends[min(len(sorted_sends) - 1, int(len(sorted_sends) * 0.95))]
+                if sorted_sends
+                else 0.0
+            )
+            event = self._event_summary(self.active_event, now) if self.active_event else None
+            queue = [self._event_summary(item, now) for item in self.event_queue]
+            health_issues: list[str] = []
+            if self.mode == "renderer" and self.power_on:
+                for device in self.config.devices:
+                    receiver = self.receiver_status.get(device.id)
+                    if not receiver:
+                        continue
+                    if not receiver.get("ok"):
+                        health_issues.append(f"{device.name} receiver probe failed")
+                        continue
+                    if time.time() - float(receiver.get("checked_at", 0)) > 15:
+                        health_issues.append(f"{device.name} receiver telemetry is stale")
+                    if receiver.get("on") is False:
+                        health_issues.append(f"{device.name} is switched off in WLED")
+                    receiver_fps = float(receiver.get("fps") or 0)
+                    if receiver_fps < self.config.fps * 0.8:
+                        health_issues.append(
+                            f"{device.name} displays {receiver_fps:g} FPS; target is {self.config.fps}"
+                        )
+                    expected_mode = "UDP" if device.transport == "udp_realtime" else "DDP"
+                    if receiver.get("live_mode") != expected_mode:
+                        health_issues.append(
+                            f"{device.name} reports {receiver.get('live_mode') or 'no'} realtime owner; "
+                            f"expected {expected_mode}"
+                        )
+            active_ambient = self._ambient_at(now)
+            return {
+                "ok": (
+                    self.last_error is None
+                    and self.output_error is None
+                    and not health_issues
+                ),
+                "health_issues": health_issues,
+                "mode": self.mode,
+                "power": self.power_status(),
+                "fps_target": self.config.fps,
+                "fps_average": round(self.frames_rendered / max(0.001, now - self.started_at), 2),
+                "fps_recent": round(recent_fps, 2),
+                "frame_interval_p95_ms": round(p95_interval * 1000, 2),
+                "frame_interval_max_ms": round(max(intervals, default=0.0) * 1000, 2),
+                "send_duration_p95_ms": round(p95_send * 1000, 3),
+                "deadline_misses": self.deadline_misses,
+                "frames_rendered": self.frames_rendered,
+                "frames_sent": self.frames_sent,
+                "bytes_sent": self.bytes_sent,
+                "output_lease_return_mode": self.return_mode_after_events,
+                "output_validation": dict(self.output_validation),
+                "receiver_status": dict(self.receiver_status),
+                "layers": dict(self.layers),
+                "music": self.music_status(),
+                "ambient": {
+                    **self._ambient_json(active_ambient),
+                    "transitioning": now - self.ambient_changed_at < self.ambient_transition,
+                },
+                "context": dict(self.context),
+                "rain_simulation": {
+                    device_id: field.status() for device_id, field in self.rain_fields.items()
+                },
+                "layer_targets": {
+                    name: list(targets) if targets else "all"
+                    for name, targets in self.layer_targets.items()
+                },
+                "active_event": event,
+                "queued_events": queue,
+                "last_event": self.last_event,
+                "last_error": self.last_error,
+                "output_error": self.output_error,
+                "devices": [
+                    {
+                        "id": device.id,
+                        "name": device.name,
+                        "host": device.host,
+                        "pixel_count": device.pixel_count,
+                        "transport": device.transport,
+                        "transport_port": (
+                            device.realtime_port
+                            if device.transport == "udp_realtime"
+                            else device.ddp_port
+                        ),
+                        "lanes": [asdict(lane) for lane in device.lanes],
+                    }
+                    for device in self.config.devices
+                ],
+            }
+
+    @staticmethod
+    def _validate_ambient(
+        changes: dict[str, Any],
+        base: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        allowed = {
+            "mode", "palette", "speed", "cloud_scale", "saturation",
+            "brightness", "expression", "preset", "style",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown ambient settings: " + ", ".join(sorted(unknown)))
+        result = dict(base or {})
+        if "mode" in changes:
+            if changes["mode"] not in {"adaptive", "manual"}:
+                raise ValueError("ambient mode must be adaptive or manual")
+            result["mode"] = changes["mode"]
+        if "mode" not in result:
+            result["mode"] = "adaptive"
+        if "style" in changes:
+            if changes["style"] not in {"nebula", "party"}:
+                raise ValueError("ambient style must be nebula or party")
+            result["style"] = changes["style"]
+        if "style" not in result:
+            result["style"] = "nebula"
+        preset = changes.get("preset")
+        if preset is not None:
+            if preset not in AMBIENT_PRESETS:
+                raise ValueError("unknown ambient preset")
+            result["palette"] = tuple(parse_hex(color) for color in AMBIENT_PRESETS[preset])
+        if "palette" in changes:
+            palette = changes["palette"]
+            if not isinstance(palette, (list, tuple)) or not 2 <= len(palette) <= 8:
+                raise ValueError("palette must contain between 2 and 8 colors")
+            result["palette"] = tuple(
+                color if isinstance(color, tuple) else parse_hex(str(color))
+                for color in palette
+            )
+        ranges = {
+            "speed": (0.001, 0.08),
+            "cloud_scale": (0.3, 3.0),
+            "saturation": (0.0, 2.0),
+            "brightness": (0.05, 1.0),
+            "expression": (0.5, 1.5),
+        }
+        for name, (low, high) in ranges.items():
+            if name in changes:
+                result[name] = float(changes[name])
+            if name not in result:
+                raise ValueError(f"ambient setting {name!r} is required")
+            if not low <= float(result[name]) <= high:
+                raise ValueError(f"{name} must be between {low} and {high}")
+        if "palette" not in result:
+            raise ValueError("ambient palette is required")
+        return result
+
+    def _ambient_at(self, now: float) -> dict[str, Any]:
+        second = (
+            {
+                **adaptive_ambient(
+                    time.time(),
+                    self.context,
+                    float(self.ambient_target.get("expression", 1.0)),
+                ),
+                "mode": "adaptive",
+                "style": "nebula",
+            }
+            if self.ambient_target["mode"] == "adaptive"
+            else dict(self.ambient_target)
+        )
+        progress = smoothstep(
+            0.0,
+            self.ambient_transition,
+            now - self.ambient_changed_at,
+        )
+        if progress >= 1.0:
+            return second
+        first = self.ambient_from
+        count = max(len(first["palette"]), len(second["palette"]))
+        palette = tuple(
+            mix(
+                palette_color(first["palette"], index / count),
+                palette_color(second["palette"], index / count),
+                progress,
+            )
+            for index in range(count)
+        )
+        blended = {
+            "mode": second["mode"],
+            "style": second.get("style", "nebula"),
+            "palette": palette,
+            **{
+                name: float(first[name]) + (float(second[name]) - float(first[name])) * progress
+                for name in ("speed", "cloud_scale", "saturation", "brightness", "expression")
+            },
+        }
+        for name in (
+            "mood", "time_mood", "emotion", "reason", "breath_rate",
+            "breath_depth", "wind_strength", "life_activity", "life_color",
+        ):
+            if name in second:
+                blended[name] = second[name]
+        return blended
+
+    @staticmethod
+    def _ambient_json(ambient: dict[str, Any]) -> dict[str, Any]:
+        result = {
+            "mode": ambient.get("mode", "adaptive"),
+            "palette": ["#%02x%02x%02x" % color for color in ambient["palette"]],
+            "speed": round(float(ambient["speed"]), 4),
+            "cloud_scale": round(float(ambient["cloud_scale"]), 3),
+            "saturation": round(float(ambient["saturation"]), 3),
+            "brightness": round(float(ambient["brightness"]), 3),
+            "expression": round(float(ambient.get("expression", 1.0)), 2),
+            "style": ambient.get("style", "nebula"),
+        }
+        for name in ("mood", "time_mood", "emotion", "reason"):
+            if name in ambient:
+                result[name] = ambient[name]
+        result["wind_strength"] = round(float(ambient.get("wind_strength", 0.0)), 3)
+        result["life_activity"] = round(float(ambient.get("life_activity", 0.0)), 3)
+        return result
+
+    def _persist_ambient(self, ambient: dict[str, Any]) -> None:
+        try:
+            self.settings_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.settings_path.with_suffix(self.settings_path.suffix + ".tmp")
+            payload = self._ambient_json(ambient)
+            payload = {
+                name: payload[name]
+                for name in (
+                    "mode", "palette", "speed", "cloud_scale",
+                    "saturation", "brightness", "expression", "style",
+                )
+            }
+            temporary.write_text(
+                json.dumps(payload, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(self.settings_path)
+        except OSError as exc:
+            raise ValueError(f"could not save ambient settings: {exc}") from exc
+
+    @staticmethod
+    def _validate_context(
+        changes: dict[str, Any],
+        base: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        allowed = {
+            "weather", "temperature", "temperature_unit", "humidity",
+            "cloud_coverage", "wind_speed", "sun_elevation", "presence", "timezone", "updated_at",
+        }
+        unknown = set(changes) - allowed
+        if unknown:
+            raise ValueError("unknown house context: " + ", ".join(sorted(unknown)))
+        result = dict(base or {})
+        if "weather" in changes:
+            result["weather"] = str(changes["weather"] or "unknown").strip().lower()
+        if "temperature_unit" in changes:
+            result["temperature_unit"] = str(changes["temperature_unit"] or "°F")[:8]
+        if "presence" in changes:
+            result["presence"] = str(changes["presence"] or "unknown").strip().lower()[:32]
+        if "timezone" in changes:
+            result["timezone"] = str(changes["timezone"] or "UTC").strip()[:64]
+        ranges = {
+            "temperature": (-100.0, 180.0),
+            "humidity": (0.0, 100.0),
+            "cloud_coverage": (0.0, 100.0),
+            "wind_speed": (0.0, 250.0),
+            "sun_elevation": (-90.0, 90.0),
+        }
+        for name, (low, high) in ranges.items():
+            if name in changes:
+                value = changes[name]
+                result[name] = None if value is None or value == "" else float(value)
+            if result.get(name) is not None and not low <= float(result[name]) <= high:
+                raise ValueError(f"{name} must be between {low} and {high}")
+        if "updated_at" in changes:
+            result["updated_at"] = changes["updated_at"]
+        return result
+
+    def _persist_context(self, context: dict[str, Any]) -> None:
+        try:
+            self.context_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self.context_path.with_suffix(self.context_path.suffix + ".tmp")
+            temporary.write_text(json.dumps(context, indent=2) + "\n", encoding="utf-8")
+            temporary.replace(self.context_path)
+        except OSError as exc:
+            raise ValueError(f"could not save house context: {exc}") from exc
+
+    @staticmethod
+    def _rain_intensity(context: dict[str, Any]) -> float:
+        weather = str(context.get("weather") or "unknown").lower()
+        intensity = {
+            "pouring": 1.8,
+            "lightning-rainy": 1.7,
+            "hail": 1.55,
+            "rainy": 1.0,
+            "snowy-rainy": 0.8,
+        }.get(weather, 0.75)
+        humidity = context.get("humidity")
+        if humidity is not None:
+            intensity += max(0.0, (float(humidity) - 75.0) / 100.0)
+        return intensity
+
+    def _monitor_outputs(self) -> None:
+        """Probe the receiver outside the render loop so diagnostics cannot cause jitter."""
+        while not self.stop_event.is_set():
+            checked_at = time.time()
+            for device in self.config.devices:
+                try:
+                    with urllib.request.urlopen(
+                        f"http://{device.host}/json/info", timeout=2.0
+                    ) as response:
+                        info = json.load(response)
+                    leds = info.get("leds", {})
+                    state = self._wled_state(device)
+                    reading = {
+                        "ok": True,
+                        "checked_at": checked_at,
+                        "fps": leds.get("fps"),
+                        "live": info.get("live"),
+                        "live_mode": info.get("lm"),
+                        "source_ip": info.get("lip"),
+                        "version": info.get("ver"),
+                        "on": state.get("on"),
+                        "brightness": state.get("bri"),
+                    }
+                except Exception as exc:
+                    reading = {
+                        "ok": False,
+                        "checked_at": checked_at,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                with self.lock:
+                    self.receiver_status[device.id] = reading
+            self.stop_event.wait(5.0)
+
+    def _normalize_targets(
+        self,
+        targets: list[str] | tuple[str, ...] | None,
+    ) -> tuple[str, ...] | None:
+        if not targets:
+            return None
+        known = {
+            item
+            for device in self.config.devices
+            for item in (device.id, *(lane.id for lane in device.lanes))
+        }
+        normalized = tuple(dict.fromkeys(str(target) for target in targets))
+        unknown = sorted(set(normalized) - known)
+        if unknown:
+            raise ValueError("unknown targets: " + ", ".join(unknown))
+        return normalized
+
+    @staticmethod
+    def _target_lanes(device: Any, targets: tuple[str, ...] | None) -> tuple[Any, ...]:
+        if targets is None or device.id in targets:
+            return device.lanes
+        return tuple(lane for lane in device.lanes if lane.id in targets)
+
+    def _validate_outputs(self) -> None:
+        results: dict[str, dict[str, Any]] = {}
+        failures = []
+        for device in self.config.devices:
+            try:
+                with urllib.request.urlopen(f"http://{device.host}/json/info", timeout=2.0) as response:
+                    info = json.load(response)
+                reported_pixels = int(info.get("leds", {}).get("count", 0))
+                if reported_pixels < device.pixel_count:
+                    raise ValueError(
+                        f"reports {reported_pixels} pixels; renderer requires {device.pixel_count}"
+                    )
+                results[device.id] = {
+                    "ok": True,
+                    "reported_pixels": reported_pixels,
+                    "version": info.get("ver"),
+                }
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"
+                results[device.id] = {"ok": False, "error": message}
+                failures.append(f"{device.name}: {message}")
+        with self.lock:
+            self.output_validation = results
+        if failures:
+            self.output_error = "WLED preflight failed: " + "; ".join(failures)
+            raise ValueError(self.output_error)
+        self.output_error = None
+        self._record("outputs_validated", devices=list(results))
+
+    def frame_snapshot(self) -> dict[str, list[str]]:
+        with self.lock:
+            return {
+                device_id: ["#%02x%02x%02x" % pixel for pixel in frame]
+                for device_id, frame in self.frames.items()
+            }
+
+    def _record(self, event: str, **details: Any) -> None:
+        record = {"timestamp": time.time(), "event": event, **details}
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(record, separators=(",", ":")) + "\n")
+        except OSError:
+            LOGGER.exception("could not write renderer event log")

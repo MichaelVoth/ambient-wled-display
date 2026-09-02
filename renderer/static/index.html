@@ -1,0 +1,899 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#10143f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="House Lights">
+  <link rel="manifest" href="/manifest.json">
+  <title>Ambient Display Control Center</title>
+  <style>
+    :root { color-scheme: dark; --panel:#141922; --line:#2b3444; --cyan:#55d8e8; --muted:#91a0b5; }
+    * { box-sizing:border-box; }
+    body { margin:0; font:15px/1.45 system-ui,sans-serif; background:#090c11; color:#eef4ff; }
+    header { padding:22px 28px; border-bottom:1px solid var(--line); background:#0e131b; }
+    h1 { margin:0 0 4px; font-size:22px; font-weight:650; }
+    header p { margin:0; color:var(--muted); }
+    main { display:grid; grid-template-columns:minmax(250px,360px) minmax(500px,1fr); gap:20px; padding:20px; align-items:start; }
+    section { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
+    h2 { font-size:16px; margin:0 0 14px; }
+    label { color:var(--muted); display:block; margin:13px 0 5px; }
+    button,select,input { background:#202938; color:#fff; border:1px solid #3c4960; border-radius:8px; padding:9px 11px; }
+    button { cursor:pointer; }
+    button:hover { border-color:var(--cyan); }
+    button.active { border-color:#73dbe8; box-shadow:0 0 0 1px #73dbe8 inset; background:#173b45; }
+    button.primary { background:#117787; border-color:#32b7c9; }
+    button.reminder { border-color:#c88b2e; color:#ffd58a; }
+    button.success { border-color:#2c9c61; color:#88efb5; }
+    button.warning { border-color:#d86f27; color:#ffb176; }
+    button.celebration { border-color:#ab77f5; color:#e0c8ff; background:#3a2755; }
+    button.welcome { border-color:#eaa552; color:#ffd49c; }
+    button.comfort { border-color:#d87972; color:#ffc0b4; }
+    button.curious { border-color:#6fbed3; color:#9feafa; }
+    button.goodbye { border-color:#7180bd; color:#b9c5ff; }
+    button.storm { border-color:#9ba9ec; color:#dbe0ff; background:#262d54; }
+    button.urgent { border-color:#d64e4e; color:#ff9f9f; }
+    button.music { border-color:#ff3fd4; color:#fff; background:linear-gradient(120deg,#d11295,#6424db 52%,#087f9d); font-weight:700; }
+    .music-card { background:radial-gradient(circle at 85% 10%,#4c145b 0,transparent 38%),linear-gradient(135deg,#16152b,#111c2d); border-color:#6d397d; }
+    .music-meter { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin-top:14px; }
+    .music-meter > span { min-width:0; border-radius:8px; background:#101621; padding:7px; overflow:hidden; }
+    .music-meter b { display:flex; justify-content:space-between; gap:4px; font-size:11px; }
+    .music-meter em { color:var(--muted); font-style:normal; font-weight:500; }
+    .music-meter small { color:var(--muted); display:block; min-height:31px; font-size:10px; line-height:1.25; margin:3px 0 5px; }
+    .music-meter i { display:block; height:100%; width:0; transition:width 32ms linear; }
+    .music-meter .bar { display:block; height:7px; border-radius:99px; background:#252b3d; overflow:hidden; padding:0; }
+    .music-meter span:nth-child(1) i { background:#ff431c; }
+    .music-meter span:nth-child(2) i { background:#ff2fe0; }
+    .music-meter span:nth-child(3) i { background:#35ff72; }
+    .music-meter span:nth-child(4) i { background:#ffbe18; }
+    .music-signal { margin-top:10px; padding:9px 10px; border-radius:8px; background:#101621; color:#cad6e8; font-size:12px; }
+    .music-signal strong { color:#fff; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .status { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .metric { background:#0d1219; border-radius:9px; padding:10px; }
+    .metric small { color:var(--muted); display:block; }
+    .device { display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; }
+    .lane { text-align:center; color:var(--muted); }
+    canvas { display:block; width:54px; height:556px; background:#020304; border:1px solid #313a49; border-radius:7px; margin:8px auto; }
+    pre { white-space:pre-wrap; color:#b9c8db; font-size:12px; }
+    .ok { color:#80e6a4; } .bad { color:#ff8a86; }
+    .notice { min-height:22px; margin-top:10px; color:var(--muted); }
+    .mood { padding:12px; border-radius:10px; background:linear-gradient(120deg,#182d53,#275a64,#66406f); margin:12px 0; }
+    .mood small { color:#d7e4f2; display:block; }
+    .mood strong { display:block; font-size:20px; text-transform:capitalize; }
+    .controls { grid-column:2; grid-row:1; }
+    .controls > section + section { margin-top:20px; }
+    .simulator { grid-column:1; grid-row:1; position:sticky; top:20px; max-height:calc(100vh - 40px); overflow:auto; }
+    .source-warning { max-width:620px; margin:12vh auto; padding:28px; border:1px solid #b77a35; border-radius:16px; background:#17130f; }
+    .control-grid { display:grid; grid-template-columns:1fr auto; gap:8px 12px; align-items:center; }
+    .control-grid label { margin:6px 0; }
+    .control-grid input[type="range"] { width:180px; padding:0; }
+    .control-grid input[type="color"] { width:72px; height:38px; padding:3px; cursor:pointer; }
+    .colors { display:flex; gap:8px; flex-wrap:wrap; }
+    .colors input[type="color"] { width:48px; height:42px; padding:3px; cursor:pointer; }
+    output { min-width:52px; color:#d8e5f5; text-align:right; }
+    details summary { cursor:pointer; color:#dbe7f7; font-weight:650; }
+    details[open] summary { margin-bottom:14px; }
+    @media (max-width:800px) {
+      main { grid-template-columns:1fr; }
+      .controls { grid-column:1; grid-row:1; }
+      .simulator { grid-column:1; grid-row:2; position:relative; top:auto; max-height:none; }
+    }
+    /* Independent card stacks avoid the empty rows of a conventional grid. */
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+    #layoutNotice.storage-warning { position:relative; width:auto; height:auto; margin:12px 16px; clip-path:none; white-space:normal; color:#ffd58a; }
+    main.dashboard { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; padding:16px; align-items:start; }
+    .dashboard-columns { display:grid; gap:16px; align-items:start; min-width:0; }
+    .dashboard-column { display:flex; flex-direction:column; gap:16px; min-width:0; min-height:80px; }
+    section.dashboard-card { min-width:0; margin:0 !important; padding:14px; grid-column:auto; grid-row:auto; position:relative; top:auto; max-height:none; overflow:visible; container-type:inline-size; }
+    .card-heading { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+    .card-heading h2 { flex:1; min-width:0; font-size:15px; margin:0; }
+    .card-body p { font-size:13px; line-height:1.5; }
+    .card-body select { max-width:100%; min-width:0; width:100%; }
+    .card-body .row select { flex:1 1 240px; }
+    .card-body input[type=number] { max-width:80px; }
+    .card-body .control-grid { grid-template-columns:minmax(0,1fr); gap:4px; }
+    .card-body .control-grid label { font-size:12px; margin:8px 0 1px; }
+    .card-body .control-grid input[type=range] { width:100%; min-width:60px; }
+    .card-body .control-grid .row input[type=range] { flex:1; min-width:80px; width:0; }
+    .card-body .music-meter { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .card-body .status { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .card-body pre { max-height:380px; overflow:auto; overflow-wrap:anywhere; }
+    .card-body button { padding:8px 9px; font-size:12px; }
+    .card-body .notice { font-size:12px; }
+    .simulator .device { justify-content:center; }
+    .simulator canvas { height:min(50vh,420px); }
+    .move-handle { flex:0 0 32px; width:32px; height:32px; display:grid; place-items:center; padding:0; color:var(--muted); background:transparent; border:1px solid var(--line); border-radius:6px; cursor:grab; touch-action:none; user-select:none; }
+    .move-handle:hover { color:var(--cyan); background:#202938; }
+    .move-handle svg { pointer-events:none; }
+    .move-handle:active { cursor:grabbing; }
+    .moving-card .dashboard-columns { align-items:stretch; }
+    .moving-card .dashboard-column { outline:1px dashed #395266; outline-offset:4px; border-radius:12px; }
+    .dashboard-card.dragging { opacity:.35; }
+    .card-drop-target { border:2px dashed var(--cyan); background:#14333d; border-radius:12px; min-height:70px; }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
+    @container (min-width: 600px) {
+      .card-body .control-grid { grid-template-columns:minmax(160px,1fr) minmax(160px,1fr); gap:8px 12px; }
+      .card-body .music-meter { grid-template-columns:repeat(4,minmax(0,1fr)); }
+    }
+    @media(max-width:700px) {
+      .simulator canvas { height:180px; }
+      .move-handle { flex-basis:44px; width:44px; height:44px; }
+      main.dashboard { padding:12px; }
+      .dashboard-card { overflow-wrap:anywhere; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Ambient Display Control Center</h1>
+    <p>Semantic layers in, complete LED frames out.</p>
+  </header>
+  <span id="layoutNotice" class="sr-only" role="status"></span>
+  <main id="dashboard">
+    <div class="controls">
+      <section style="margin-bottom:20px">
+        <h2>Light power &amp; brightness</h2>
+        <div class="row">
+          <button id="powerOn" class="primary">On</button>
+          <button id="powerOff">Off</button>
+          <span id="powerState" role="status">Checking the strip…</span>
+        </div>
+        <label for="masterBrightness">Overall brightness <output id="masterBrightnessValue">100%</output></label>
+        <input id="masterBrightness" style="width:100%" type="range" min="1" max="100" step="1" value="100">
+        <div class="row" style="margin-top:8px">
+          <button data-brightness="0.1">10%</button><button data-brightness="0.25">25%</button>
+          <button data-brightness="0.5">50%</button><button data-brightness="0.75">75%</button>
+          <button data-brightness="1">100%</button>
+        </div>
+        <p style="color:var(--muted)">Dims everything: ambient colors, rain, music, and the clock. Saved across restarts. Changing brightness while off keeps the strip off.</p>
+        <div id="powerNotice" class="notice" role="status">Morning On runs every day at 6 AM, including rainy days.</div>
+      </section>
+      <section>
+        <h2>Everyday control</h2>
+        <p style="color:var(--muted);margin-top:-6px">Tell the system what is happening. The renderer handles the technical ownership changes.</p>
+        <label>What should the lights do?</label>
+        <div class="row">
+          <button id="liveAutomatically" class="primary">Live automatically</button>
+          <button id="resumeAmbient">Resume ambient</button>
+          <button id="startMusic">Dance to music</button>
+          <button id="quietNow">Turn light off</button>
+        </div>
+        <details style="margin-top:14px">
+          <summary>Play a one-time scene</summary>
+          <p style="color:var(--muted)">These are short visual messages. They temporarily take the lead, then fade back to the living house background. Hover a button for a quick description.</p>
+          <div class="row">
+            <button data-everyday-signal="welcome" class="welcome" title="A warm wave rises through the strip and glints near the top.">Warm arrival sweep</button>
+            <button data-everyday-signal="comfort" class="comfort" title="Two soft warm fronts meet, settle, and fade.">Slow comfort glow</button>
+            <button data-everyday-signal="curious" class="curious" title="Two cool points explore the strip at different speeds.">Cool color exploration</button>
+            <button data-everyday-signal="goodbye" class="goodbye" title="A cool veil passes over the strip and leaves a small warm memory.">Fade out for leaving</button>
+          </div>
+        </details>
+        <div id="everydayNotice" class="notice">The house is currently following its environment.</div>
+        <div class="metric"><small>Right now</small><span id="everydayState">Connecting to the house…</span></div>
+      </section>
+      <section class="music-card">
+        <h2>Music lights</h2>
+        <p style="color:var(--muted);margin-top:-6px">Choose where you want to listen, then use one button. The laptop and Pi handle routing, capture, and the lights together.</p>
+        <div class="control-grid">
+          <label for="musicRoute">Play music through</label>
+          <select id="musicRoute"><option value="">Finding speakers…</option></select>
+          <label for="musicEffect">Light style</label>
+          <select id="musicEffect">
+            <option value="meter">Meter — black background, top-down volume</option>
+            <option value="chunks">Chunks — a few uneven islands on black</option>
+            <option value="firefly">Firefly — one dancing LED on black</option>
+          </select>
+          <label for="musicSensitivity">Sensitivity / maximum reach <output id="musicSensitivityLabel">22% · about 30 LEDs</output></label>
+          <input id="musicSensitivity" type="range" min="0.05" max="1" step="0.01" value="0.22">
+          <label for="musicMotionSpeed">Motion speed <output id="musicMotionSpeedLabel">0.75×</output></label>
+          <input id="musicMotionSpeed" type="range" min="0.1" max="3" step="0.05" value="0.75">
+          <label for="musicColorMode">Colors</label>
+          <select id="musicColorMode">
+            <option value="cycle">Cycle through the full color wheel</option>
+            <option value="custom">Use my two colors</option>
+          </select>
+          <label for="musicPrimary">Primary color</label>
+          <input id="musicPrimary" type="color" value="#00beff">
+          <label for="musicAccent">Beat / accent color</label>
+          <input id="musicAccent" type="color" value="#ff20aa">
+        </div>
+        <div class="row" style="margin-top:14px">
+          <button id="musicToggle" class="music">Start music lights</button>
+          <button id="repairMusicRoutes">Repair saved speaker routes</button>
+        </div>
+        <div class="music-meter" aria-label="Live audio response">
+          <span><b>Bass <em id="musicBassValue">0%</em></b><small>Low notes make large waves and heat.</small><span class="bar"><i id="musicBass"></i></span></span>
+          <span><b>Mids <em id="musicMidValue">0%</em></b><small>Voices and instruments shape the body.</small><span class="bar"><i id="musicMid"></i></span></span>
+          <span><b>Highs <em id="musicTrebleValue">0%</em></b><small>Hi-hats and detail make tips and sparks.</small><span class="bar"><i id="musicTreble"></i></span></span>
+          <span><b>Beat <em id="musicBeatValue">0%</em></b><small>Detected kicks add a quick accent.</small><span class="bar"><i id="musicBeat"></i></span></span>
+        </div>
+        <div id="musicSignal" class="music-signal"><strong>Audio path:</strong> speaker → BlackHole copy → analyzer → Pi → WLED · measuring…</div>
+        <div id="musicGuide" class="music-signal"><strong>What to watch:</strong> a simple color meter expands down from the top; everything below it stays black.</div>
+        <div id="musicNotice" class="notice">The laptop helper connects automatically when you sign in.</div>
+      </section>
+      <section>
+        <details>
+        <summary>System and output ownership</summary>
+        <div class="status">
+          <div class="metric"><small>Health</small><span id="health">Connecting…</span></div>
+          <div class="metric"><small>Pi frame rate</small><span id="fps">—</span></div>
+          <div class="metric"><small>WLED display rate</small><span id="receiverFps">—</span></div>
+          <div class="metric"><small>Transport</small><span id="transport">—</span></div>
+          <div class="metric"><small>Mode</small><span id="modeText">—</span></div>
+          <div class="metric"><small>Active event</small><span id="eventText">None</span></div>
+        </div>
+        <label for="mode">Output ownership</label>
+        <div class="row">
+          <select id="mode">
+            <option value="renderer">Renderer → WLED</option>
+            <option value="preview">Simulator only</option>
+            <option value="wled">Native WLED effect</option>
+            <option value="music">Legacy external music controller</option>
+            <option value="off">Output stopped</option>
+          </select>
+          <button id="setMode">Apply</button>
+        </div>
+        </details>
+      </section>
+      <section style="margin-top:20px">
+        <h2>Ambient nebula</h2>
+        <p style="color:var(--muted);margin-top:-6px">The house can choose a living palette from time, weather, temperature, and wind—or you can take manual control.</p>
+        <div class="mood">
+          <small>The house is feeling</small>
+          <strong id="houseEmotion">Awake</strong>
+          <div id="houseMood">Learning the room…</div>
+          <div id="houseReason" style="color:#d7e4f2;margin-top:3px">Listening to its surroundings…</div>
+          <div id="houseActivity" style="color:#d7e4f2;margin-top:3px">Breathing softly…</div>
+          <div id="houseContext" style="color:#b7c7d8;margin-top:3px">Waiting for Home Assistant…</div>
+        </div>
+        <label for="ambientMode">Who chooses the palette?</label>
+        <div class="row">
+          <select id="ambientMode">
+            <option value="adaptive">House chooses automatically</option>
+            <option value="manual">I choose manually</option>
+          </select>
+          <button id="useAdaptive" class="primary">Use living house mood</button>
+        </div>
+        <div class="control-grid" style="margin-top:12px">
+          <label for="ambientExpression">Emotional expression</label>
+          <div class="row"><input id="ambientExpression" type="range" min="0.5" max="1.5" step="0.1"><output id="ambientExpressionValue"></output></div>
+        </div>
+        <details id="manualStudio" style="margin-top:14px">
+        <summary>Manual palette studio</summary>
+        <label for="ambientPreset">Color look</label>
+        <div class="row">
+          <select id="ambientPreset">
+            <option value="custom">Custom</option>
+          </select>
+          <button id="loadPreset">Load look</button>
+        </div>
+        <label>Palette</label>
+        <div class="colors" id="ambientColors">
+          <input type="color" aria-label="Color 1">
+          <input type="color" aria-label="Color 2">
+          <input type="color" aria-label="Color 3">
+          <input type="color" aria-label="Color 4">
+          <input type="color" aria-label="Color 5">
+          <input type="color" aria-label="Color 6">
+          <input type="color" aria-label="Color 7">
+        </div>
+        <div class="control-grid" style="margin-top:14px">
+          <label for="ambientSpeed">Color drift</label>
+          <div class="row"><input id="ambientSpeed" type="range" min="0.001" max="0.04" step="0.001"><output id="ambientSpeedValue"></output></div>
+          <label for="ambientScale">Cloud size</label>
+          <div class="row"><input id="ambientScale" type="range" min="0.3" max="3" step="0.1"><output id="ambientScaleValue"></output></div>
+          <label for="ambientSaturation">Color intensity</label>
+          <div class="row"><input id="ambientSaturation" type="range" min="0" max="2" step="0.05"><output id="ambientSaturationValue"></output></div>
+          <label for="ambientBrightness">Brightness</label>
+          <div class="row"><input id="ambientBrightness" type="range" min="0.05" max="1" step="0.05"><output id="ambientBrightnessValue"></output></div>
+        </div>
+        <div class="row" style="margin-top:14px"><button id="applyAmbient">Use these manual colors</button></div>
+        <div id="ambientNotice" class="notice">Adaptive mode evolves continuously. Manual changes crossfade over three seconds.</div>
+        </details>
+      </section>
+      <section>
+        <h2>Native WLED effects</h2>
+        <p style="color:var(--muted);margin-top:-6px">Run the smooth effects built into WLED. This releases the custom renderer until you return to the living house.</p>
+        <div class="row" style="margin-bottom:12px">
+          <button class="primary" data-wled-look="blobs">Slow color blobs</button>
+          <button data-wled-look="colorwaves">Color waves</button>
+          <button data-wled-look="aurora">Aurora</button>
+          <button data-wled-look="flow">Lava flow</button>
+          <button data-wled-look="pacifica">Pacifica</button>
+        </div>
+        <div class="control-grid">
+          <label for="wledEffect">Effect</label><select id="wledEffect"></select>
+          <label for="wledPalette">Palette</label><select id="wledPalette"></select>
+          <label for="wledSpeed">Speed <output id="wledSpeedValue">128</output></label><input id="wledSpeed" type="range" min="0" max="255" value="128">
+          <label for="wledIntensity">Intensity <output id="wledIntensityValue">128</output></label><input id="wledIntensity" type="range" min="0" max="255" value="128">
+          <label for="wledBrightness">Brightness <output id="wledBrightnessValue">50%</output></label><input id="wledBrightness" type="range" min="1" max="255" value="128">
+          <label for="wledPrimary">Primary color</label><input id="wledPrimary" type="color" value="#ff00aa">
+          <label for="wledSecondary">Secondary color</label><input id="wledSecondary" type="color" value="#00ccff">
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label style="margin:0"><input id="wledReverse" type="checkbox"> Reverse</label>
+          <label style="margin:0"><input id="wledMirror" type="checkbox"> Mirror</label>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button id="applyWled" class="primary">Run this WLED effect</button>
+          <button id="resumeHouse">Return to living house</button>
+        </div>
+        <div id="wledNotice" class="notice">Loading WLED’s built-in effects…</div>
+      </section>
+      <section>
+        <h2>Automatic instincts</h2>
+        <p style="color:var(--muted);margin-top:-6px">These are already connected. They work without opening this page.</p>
+        <div class="status">
+          <div class="metric"><small>Time + sunlight</small>Dawn through night palettes</div>
+          <div class="metric"><small>Weather</small>Color, breath, rain, and lightning</div>
+          <div class="metric"><small>Presence</small>Warm welcome when you arrive</div>
+          <div class="metric"><small>Every hour</small>Sweep and bell-toll clock</div>
+          <div class="metric"><small>Work rhythm</small>Lunch reminders and celebration</div>
+          <div class="metric"><small>House health</small>Energy, Pi-hole, and build warnings</div>
+        </div>
+      </section>
+      <section style="margin-top:20px">
+        <h2>Phone access</h2>
+        <p>While you are on home Wi-Fi, open <strong>raspberrypi.local:8090</strong> in Safari. Use Share → Add to Home Screen to make it feel like an app.</p>
+        <div class="row"><button id="copyAddress">Copy phone address</button></div>
+        <div id="phoneNotice" class="notice">No terminal command is needed; the Pi runs this control center.</div>
+      </section>
+      <section style="margin-top:20px">
+        <h2>Animations and information</h2>
+        <label for="hour">Bell-toll hour</label>
+        <div class="row">
+          <input id="hour" type="number" min="0" max="23" value="10">
+          <button id="previewHour">Preview hour</button>
+          <button id="runHour" class="primary">Run on WLED</button>
+          <button id="cancel">Cancel</button>
+        </div>
+        <div id="notice" class="notice">Preview changes only the simulator. Run on WLED takes temporary control and releases it automatically.</div>
+        <label>Persistent layers</label>
+        <div class="row">
+          <button data-layer="rain">Toggle rain</button>
+          <button data-layer="focus">Toggle focus</button>
+        </div>
+        <label>Information signals</label>
+        <div class="row">
+          <button data-signal="reminder" class="reminder">Calm reminder</button>
+          <button data-signal="success" class="success">Success wave</button>
+          <button data-signal="warning" class="warning">Warning pulse</button>
+          <button data-signal="celebration" class="celebration">Work celebration</button>
+          <button data-signal="welcome" class="welcome">Welcome home</button>
+          <button data-signal="comfort" class="comfort">Comfort</button>
+          <button data-signal="curious" class="curious">Curious</button>
+          <button data-signal="goodbye" class="goodbye">Goodbye</button>
+          <button data-signal="storm" class="storm">Storm flash</button>
+        </div>
+        <label>Urgent signal</label>
+        <div class="row"><button id="alert" class="urgent">Urgent red alert</button></div>
+      </section>
+      <section style="margin-top:20px">
+        <details>
+        <summary>Technical live state</summary>
+        <pre id="details">Waiting for renderer…</pre>
+        </details>
+      </section>
+    </div>
+    <section class="simulator">
+      <h2>House light window</h2>
+      <p id="simulatorNote" style="color:var(--muted);margin-top:-6px">Live view of the exact pixels being sent to the active physical lane.</p>
+      <div id="devices"></div>
+    </section>
+  </main>
+  <script>
+    // Presentation-only state: rearranging cards never sends lighting commands.
+    (()=>{
+      const key='ambient-dashboard-layout-v2';
+      const board=document.querySelector('#dashboard');
+      const definitions=[['power','Light power & brightness',340],['everyday','Everyday control',320],['music','Music lights',680],['system','System status',90],['ambient','Ambient nebula',500],['wled','Native WLED effects',560],['instincts','Automatic instincts',300],['phone','Phone access',190],['animations','Animations and information',490],['technical','Technical live state',90]];
+      const sections=[...board.querySelectorAll('.controls > section')];
+      const preview=board.querySelector('.simulator');
+      let state={layouts:{}};
+      try {
+        const data=JSON.parse(localStorage.getItem(key));
+        if(data?.version===2) state=data;
+        else {
+          const old=JSON.parse(localStorage.getItem('ambient-dashboard-layout-v1'));
+          // Keep existing placements when possible; the preview is now a card too.
+          for(let n=1;n<=4;n++) {
+            const layout=old?.layouts?.[`free-${n}`]||old?.layouts?.[`pinned-${n}`];
+            if(Array.isArray(layout)) state.layouts[n]=layout;
+          }
+        }
+      } catch(error) {}
+      if(!state.layouts||typeof state.layouts!=='object') state.layouts={};
+      const cards=new Map();
+      let count=0, drag=null, frameId=null;
+      const columns=document.createElement('div'); columns.className='dashboard-columns';
+      function save(message='Layout saved on this device.') {
+        const notice=document.querySelector('#layoutNotice');
+        try { localStorage.setItem(key,JSON.stringify({...state,version:2})); notice.classList.remove('storage-warning'); }
+        catch(error) { message='Your browser could not save this arrangement. It will reset on reload.'; notice.classList.add('storage-warning'); }
+        notice.textContent=message;
+      }
+      function remember() {
+        state.layouts[count]=[...columns.children].map(column=>[...column.querySelectorAll(':scope > .dashboard-card')].map(card=>card.dataset.card));
+        save();
+      }
+      function move(card,destination,before=null) {
+        destination.insertBefore(card,before); remember(); card.querySelector('.move-handle').focus();
+      }
+      function prepare(card,id,title,height) {
+        card.classList.add('dashboard-card'); card.dataset.card=id; card.dataset.title=title; card.dataset.height=height;
+        const heading=card.querySelector(':scope > h2')||document.createElement('h2'); heading.textContent=title;
+        const body=document.createElement('div'); body.className='card-body'; body.id=`card-body-${id}`;
+        heading.remove(); while(card.firstChild) body.appendChild(card.firstChild);
+        const head=document.createElement('div'); head.className='card-heading'; head.appendChild(heading);
+        const handle=document.createElement('button'); handle.className='move-handle'; handle.type='button'; handle.setAttribute('aria-label',`Move ${title}`);
+        handle.title='Drag to move · arrow keys also move this card';
+        handle.setAttribute('aria-keyshortcuts','ArrowUp ArrowDown ArrowLeft ArrowRight');
+        handle.innerHTML='<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="5" cy="3" r="1.4"/><circle cx="11" cy="3" r="1.4"/><circle cx="5" cy="8" r="1.4"/><circle cx="11" cy="8" r="1.4"/><circle cx="5" cy="13" r="1.4"/><circle cx="11" cy="13" r="1.4"/></svg>';
+        handle.addEventListener('pointerdown',event=>beginDrag(event,card));
+        handle.addEventListener('keydown',event=>{
+          if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(event.key)||drag) return;
+          event.preventDefault();
+          const column=card.parentElement, index=[...columns.children].indexOf(column);
+          if(event.key==='ArrowUp'&&card.previousElementSibling) move(card,column,card.previousElementSibling);
+          if(event.key==='ArrowDown'&&card.nextElementSibling) move(card,column,card.nextElementSibling.nextElementSibling);
+          if(event.key==='ArrowLeft'&&index>0) move(card,columns.children[index-1]);
+          if(event.key==='ArrowRight'&&index<count-1) move(card,columns.children[index+1]);
+        });
+        head.appendChild(handle); card.append(head,body); cards.set(id,card);
+      }
+      definitions.forEach(([id,title,height],index)=>prepare(sections[index],id,title,height));
+      prepare(preview,'preview','House light window',600);
+      board.replaceChildren(columns); board.className='dashboard';
+      function desiredCount() {
+        const width=board.clientWidth-32;
+        return Math.max(1,Math.min(4,Math.floor((width+16)/350)));
+      }
+      function arrange(force=false) {
+        if(drag) return;
+        const next=desiredCount();
+        if(!force&&next===count) return;
+        count=next;
+        const eligible=[...cards.keys()];
+        const known=new Set(), raw=state.layouts[count];
+        let layout=Array.from({length:count},(_,index)=>Array.isArray(raw?.[index])?raw[index].filter(id=>eligible.includes(id)&&!known.has(id)&&known.add(id)):[]);
+        if(!known.size) {
+          const heights=Array(count).fill(0);
+          const initial=['preview','power','music','ambient','everyday','animations','instincts','system','phone','technical'];
+          initial.forEach(id=>{ const shortest=heights.indexOf(Math.min(...heights)); layout[shortest].push(id); heights[shortest]+=Number(cards.get(id).dataset.height)+16; known.add(id); });
+        }
+        eligible.filter(id=>!known.has(id)).forEach(id=>layout[layout.reduce((best,items,index)=>items.length<layout[best].length?index:best,0)].push(id));
+        columns.replaceChildren(); columns.style.gridTemplateColumns=`repeat(${count},minmax(0,1fr))`;
+        layout.forEach((ids,index)=>{ const column=document.createElement('div'); column.className='dashboard-column'; column.setAttribute('aria-label',`Column ${index+1}`); ids.forEach(id=>column.appendChild(cards.get(id))); columns.appendChild(column); });
+      }
+      function beginDrag(event,card) {
+        if(event.button!==0||drag) return;
+        event.preventDefault();
+        drag={card,handle:event.currentTarget,pointerId:event.pointerId,startX:event.clientX,startY:event.clientY,x:event.clientX,y:event.clientY,placeholder:null};
+        drag.handle.setPointerCapture(event.pointerId);
+      }
+      function placeDrop() {
+        if(!drag?.placeholder) return;
+        const target=document.elementFromPoint(drag.x,drag.y)?.closest('.dashboard-column');
+        if(!target) return;
+        const before=[...target.querySelectorAll(':scope > .dashboard-card')].find(card=>card!==drag.card&&drag.y<card.getBoundingClientRect().top+card.getBoundingClientRect().height/2);
+        target.insertBefore(drag.placeholder,before||null);
+      }
+      function updateDrag(event) {
+        if(!drag||event.pointerId!==drag.pointerId) return;
+        drag.x=event.clientX; drag.y=event.clientY;
+        if(!drag.placeholder&&Math.hypot(drag.x-drag.startX,drag.y-drag.startY)>6) {
+          drag.placeholder=document.createElement('div'); drag.placeholder.className='card-drop-target'; drag.placeholder.textContent='Drop card here';
+          drag.card.classList.add('dragging'); drag.card.after(drag.placeholder);
+          board.classList.add('moving-card');
+          const scroll=()=>{ if(!drag) return; if(drag.y<65) window.scrollBy(0,-12); else if(drag.y>window.innerHeight-65) window.scrollBy(0,12); placeDrop(); frameId=requestAnimationFrame(scroll); }; frameId=requestAnimationFrame(scroll);
+        }
+        placeDrop();
+      }
+      function endDrag(commit) {
+        if(!drag) return;
+        cancelAnimationFrame(frameId);
+        if(drag.placeholder){ if(commit) drag.placeholder.before(drag.card); drag.placeholder.remove(); }
+        const moved=!!drag.placeholder;
+        if(drag.handle.hasPointerCapture(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+        drag.card.classList.remove('dragging'); board.classList.remove('moving-card'); drag=null;
+        if(commit&&moved) remember(); arrange();
+      }
+      // Listen at document scope so release outside the handle still finishes
+      // a drag, including when a browser loses pointer capture during layout.
+      document.addEventListener('pointermove',updateDrag);
+      document.addEventListener('pointerup',event=>{ if(event.pointerId===drag?.pointerId) endDrag(true); });
+      document.addEventListener('pointercancel',event=>{ if(event.pointerId===drag?.pointerId) endDrag(false); });
+      window.addEventListener('blur',()=>endDrag(false));
+      document.addEventListener('keydown',event=>{ if(event.key==='Escape') endDrag(false); });
+      new ResizeObserver(()=>arrange()).observe(board);
+      arrange(true);
+    })();
+  </script>
+  <script>
+    let config=null,status=null,ambientInitialized=false,musicSetup=null,wledSetup=null;
+    async function api(path, body) {
+      const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
+      const response=await fetch(path,options); const data=await response.json();
+      if(!response.ok) throw new Error(data.error||response.statusText); return data;
+    }
+    function buildDevices() {
+      const root=document.querySelector('#devices'); root.innerHTML='';
+      for(const device of config.devices) {
+        const block=document.createElement('div'); block.className='device';
+        for(const lane of device.lanes) {
+          const item=document.createElement('div'); item.className='lane';
+          item.innerHTML=`<strong>${lane.name}</strong><canvas width="54" height="556" data-device="${device.id}" data-start="${lane.start}" data-length="${lane.length}" data-reverse="${lane.top_at_high_index}"></canvas><small>${lane.length} LEDs</small>`;
+          block.appendChild(item);
+        }
+        root.appendChild(block);
+      }
+    }
+    function draw(frames) {
+      for(const canvas of document.querySelectorAll('canvas')) {
+        const ctx=canvas.getContext('2d'), frame=frames[canvas.dataset.device]||[];
+        if(status?.mode==='wled') {
+          ctx.fillStyle='#05070b'; ctx.fillRect(0,0,canvas.width,canvas.height);
+          continue;
+        }
+        const start=+canvas.dataset.start,length=+canvas.dataset.length,reverse=canvas.dataset.reverse==='true';
+        const h=canvas.height/length; ctx.clearRect(0,0,canvas.width,canvas.height);
+        for(let y=0;y<length;y++) {
+          const local=reverse?length-1-y:y; ctx.fillStyle=frame[start+local]||'#000000';
+          ctx.fillRect(0,y*h,canvas.width,Math.ceil(h)+0.4);
+        }
+      }
+    }
+    function setPalette(colors) {
+      const inputs=[...document.querySelectorAll('#ambientColors input')];
+      inputs.forEach((input,index)=>input.value=colors[index%colors.length]);
+    }
+    function updateAmbientLabels() {
+      const speed=+document.querySelector('#ambientSpeed').value;
+      document.querySelector('#ambientSpeedValue').textContent=`${Math.round(1/speed)} sec`;
+      document.querySelector('#ambientScaleValue').textContent=`${document.querySelector('#ambientScale').value}×`;
+      document.querySelector('#ambientSaturationValue').textContent=`${document.querySelector('#ambientSaturation').value}×`;
+      document.querySelector('#ambientBrightnessValue').textContent=`${Math.round(+document.querySelector('#ambientBrightness').value*100)}%`;
+      const expression=+document.querySelector('#ambientExpression').value;
+      document.querySelector('#ambientExpressionValue').textContent=expression<0.8?'Quiet':expression>1.2?'Expressive':'Balanced';
+    }
+    function loadAmbient(ambient) {
+      document.querySelector('#ambientMode').value=ambient.mode||'adaptive';
+      setPalette(ambient.palette);
+      document.querySelector('#ambientSpeed').value=ambient.speed;
+      document.querySelector('#ambientScale').value=ambient.cloud_scale;
+      document.querySelector('#ambientSaturation').value=ambient.saturation;
+      document.querySelector('#ambientBrightness').value=ambient.brightness;
+      document.querySelector('#ambientExpression').value=ambient.expression||1;
+      document.querySelector('#manualStudio').open=ambient.mode==='manual';
+      updateAmbientLabels(); ambientInitialized=true;
+    }
+    function loadWled(wled) {
+      wledSetup=wled;
+      document.querySelector('#wledEffect').value=String(wled.effect);
+      document.querySelector('#wledPalette').value=String(wled.palette);
+      document.querySelector('#wledSpeed').value=wled.speed;
+      document.querySelector('#wledIntensity').value=wled.intensity;
+      document.querySelector('#wledBrightness').value=wled.brightness;
+      document.querySelector('#wledPrimary').value=wled.colors?.[0]||'#ff00aa';
+      document.querySelector('#wledSecondary').value=wled.colors?.[1]||'#00ccff';
+      document.querySelector('#wledReverse').checked=!!wled.reverse;
+      document.querySelector('#wledMirror').checked=!!wled.mirror;
+      updateWledLabels();
+    }
+    function updateWledLabels() {
+      document.querySelector('#wledSpeedValue').textContent=document.querySelector('#wledSpeed').value;
+      document.querySelector('#wledIntensityValue').textContent=document.querySelector('#wledIntensity').value;
+      document.querySelector('#wledBrightnessValue').textContent=`${Math.round(+document.querySelector('#wledBrightness').value/255*100)}%`;
+    }
+    function wledSettings() {
+      return {on:true,effect:+document.querySelector('#wledEffect').value,palette:+document.querySelector('#wledPalette').value,speed:+document.querySelector('#wledSpeed').value,intensity:+document.querySelector('#wledIntensity').value,brightness:+document.querySelector('#wledBrightness').value,reverse:document.querySelector('#wledReverse').checked,mirror:document.querySelector('#wledMirror').checked,colors:[document.querySelector('#wledPrimary').value,document.querySelector('#wledSecondary').value,'#000000']};
+    }
+    function rgbHex(value,fallback) {
+      if(!Array.isArray(value)||value.length!==3) return fallback;
+      return `#${value.map(channel=>Math.max(0,Math.min(255,channel)).toString(16).padStart(2,'0')).join('')}`;
+    }
+    function musicSettings() {
+      return {
+        effect:document.querySelector('#musicEffect').value,
+        sensitivity:+document.querySelector('#musicSensitivity').value,
+        motion_speed:+document.querySelector('#musicMotionSpeed').value,
+        color_mode:document.querySelector('#musicColorMode').value,
+        primary:document.querySelector('#musicPrimary').value,
+        accent:document.querySelector('#musicAccent').value
+      };
+    }
+    function updateMusicControls(music) {
+      const activeEffect=music.effect||'meter';
+      document.querySelector('#musicEffect').value=activeEffect;
+      const guides={
+        meter:'One smoothly changing color grows down from the top with volume. The rest is fully black.',
+        chunks:'A few unequal soft islands drift continuously. Volume controls brightness; beats briefly strengthen them.',
+        firefly:'One LED travels continuously up and down. Music changes its pace, brightness, and color.'
+      };
+      document.querySelector('#musicGuide').innerHTML=`<strong>What to watch:</strong> ${guides[activeEffect]||guides.meter}`;
+      const sensitivity=music.sensitivity??0.22;
+      if(document.activeElement!==document.querySelector('#musicSensitivity')) document.querySelector('#musicSensitivity').value=sensitivity;
+      document.querySelector('#musicSensitivityLabel').textContent=`${Math.round(sensitivity*100)}% · about ${Math.round(sensitivity*139)} LEDs`;
+      const motion=music.motion_speed??0.75;
+      if(document.activeElement!==document.querySelector('#musicMotionSpeed')) document.querySelector('#musicMotionSpeed').value=motion;
+      document.querySelector('#musicMotionSpeedLabel').textContent=`${Number(motion).toFixed(2)}×`;
+      document.querySelector('#musicColorMode').value=music.color_mode||'cycle';
+      if(document.activeElement!==document.querySelector('#musicPrimary')) document.querySelector('#musicPrimary').value=rgbHex(music.primary,'#00beff');
+      if(document.activeElement!==document.querySelector('#musicAccent')) document.querySelector('#musicAccent').value=rgbHex(music.accent,'#ff20aa');
+      const custom=(music.color_mode||'cycle')==='custom';
+      document.querySelector('#musicPrimary').disabled=!custom;
+      document.querySelector('#musicAccent').disabled=!custom;
+    }
+    function renderAudio(music) {
+      for(const [name,id] of [['bass','musicBass'],['mid','musicMid'],['treble','musicTreble'],['beat','musicBeat']]) {
+        const percent=Math.round((music.features?.[name]||0)*100);
+        document.querySelector(`#${id}`).style.width=`${percent}%`;
+        document.querySelector(`#${id}Value`).textContent=`${percent}%`;
+      }
+      const notice=document.querySelector('#musicNotice');
+      const signal=Math.max(music.features?.bass||0,music.features?.mid||0,music.features?.treble||0,music.features?.energy||0);
+      const sourceFps=Math.round(music.features?.source_fps||0);
+      const path=document.querySelector('#musicSignal');
+      if(music.enabled&&music.receiving_audio&&signal>0.015) {
+        notice.textContent='Audio is live. The values below are the signals currently driving the selected effect.';
+        path.innerHTML=`<strong>Live path:</strong> analyzer ${sourceFps||'—'} FPS → Pi ${status?.fps_recent||'—'} FPS → WLED ${status?.receiver_status?.[status?.devices?.[0]?.id]?.fps||'—'} FPS`;
+        notice.className='notice ok';
+      } else if(music.enabled&&music.receiving_audio) {
+        notice.textContent='The audio path is connected and currently hearing silence.';
+        path.innerHTML=`<strong>Live path:</strong> analyzer ${sourceFps||'—'} FPS → Pi ${status?.fps_recent||'—'} FPS → WLED ${status?.receiver_status?.[status?.devices?.[0]?.id]?.fps||'—'} FPS`;
+        notice.className='notice';
+      } else if(music.enabled) {
+        notice.textContent='Music mode is waiting for the laptop audio analyzer.';
+        path.innerHTML='<strong>Live path:</strong> reconnecting the laptop analyzer…';
+        notice.className='notice';
+      }
+    }
+    let livePollBusy=false;
+    async function refreshLive() {
+      if(livePollBusy) return;
+      livePollBusy=true;
+      try {
+        const live=await api('/api/live');
+        if(status) status.music=live.music;
+        updateMusicControls(live.music);
+        renderAudio(live.music);
+        draw(live.frames);
+      } catch(error) { /* The slower health refresh reports persistent errors. */ }
+      finally { livePollBusy=false; }
+    }
+    async function refresh() {
+      try {
+        const [nextStatus,frame]=await Promise.all([api('/api/status'),api('/api/frame')]); status=nextStatus;
+        document.querySelector('#health').textContent=status.ok?'Healthy':'Error';
+        document.querySelector('#health').className=status.ok?'ok':'bad';
+        document.querySelector('#fps').textContent=`${status.fps_recent} / ${status.fps_target} FPS`;
+        const device=status.devices[0],receiver=status.receiver_status[device?.id]||{};
+        document.querySelector('#powerOn').classList.toggle('active',!!status.power?.on);
+        document.querySelector('#powerOff').classList.toggle('active',!status.power?.on);
+        document.querySelector('#powerState').textContent=status.power?.on ? (receiver.on===false?'On requested · WLED reports off':'On') : 'Off';
+        if(document.activeElement!==document.querySelector('#masterBrightness')&&!powerBusy) {
+          const level=Math.round((status.power?.brightness??1)*100);
+          document.querySelector('#masterBrightness').value=level;
+          document.querySelector('#masterBrightnessValue').textContent=`${level}%`;
+        }
+        document.querySelector('#receiverFps').textContent=receiver.fps===undefined?'Waiting…':`${receiver.fps} / ${status.fps_target} FPS`;
+        document.querySelector('#transport').textContent=device?`${device.transport} :${device.transport_port}`:'—';
+        document.querySelector('#modeText').textContent=status.mode;
+        document.querySelector('#mode').value=status.mode;
+        document.querySelector('#simulatorNote').textContent=status.mode==='wled'?'WLED is drawing this effect locally; its individual pixels are not available to preview here.':'Live view of the exact pixels being sent to the active physical lane.';
+        document.querySelector('#eventText').textContent=status.active_event?`${status.active_event.kind}: ${status.active_event.phase}`:'None';
+        document.querySelector('#liveAutomatically').classList.toggle('active',status.mode==='renderer'&&status.ambient.mode==='adaptive');
+        document.querySelector('#resumeAmbient').classList.toggle('active',status.mode==='renderer'&&status.ambient.mode!=='adaptive');
+        const music=status.music||{};
+        document.querySelector('#startMusic').classList.toggle('active',!!music.enabled);
+        document.querySelector('#musicToggle').classList.toggle('active',!!music.enabled);
+        document.querySelector('#musicToggle').textContent=music.enabled?'Stop music lights':'Start music lights';
+        updateMusicControls(music);
+        renderAudio(music);
+        document.querySelector('#quietNow').classList.toggle('active',status.mode==='off');
+        const modeLabel=music.enabled?(music.receiving_audio?'Dancing to the music':'Music mode · waiting for audio'):{renderer:'Ambient renderer',preview:'Simulator only',wled:'Native WLED effect',music:'Legacy music controller',off:'Output quiet'}[status.mode]||status.mode;
+        document.querySelector('#everydayState').textContent=status.active_event?`${modeLabel} · ${status.active_event.kind} (${status.active_event.phase})`:modeLabel;
+        for(const button of document.querySelectorAll('[data-layer]')) button.textContent=`${button.dataset.layer==='rain'?'Rain':'Focus'}: ${status.layers[button.dataset.layer]?'on':'off'}`;
+        document.querySelector('#houseEmotion').textContent=status.ambient.emotion||'Self-directed';
+        document.querySelector('#houseMood').textContent=status.ambient.mood||status.ambient.time_mood||'Manual palette';
+        document.querySelector('#houseReason').textContent=status.ambient.reason||'A manual palette is guiding the room.';
+        const life=status.ambient.life_activity||0,wind=status.ambient.wind_strength||0;
+        document.querySelector('#houseActivity').textContent=`${life>0.4?'Awake glimmers':life>0.15?'Occasional glimmers':'Quiet breathing'} · ${wind>0.5?'strong gusts':wind>0.2?'moving breeze':'still air'}`;
+        const context=status.context||{}, parts=[];
+        if(context.weather&&context.weather!=='unknown') parts.push(context.weather.replaceAll('-',' '));
+        if(context.temperature!==null&&context.temperature!==undefined) parts.push(`${context.temperature}${context.temperature_unit||'°F'}`);
+        if(context.humidity!==null&&context.humidity!==undefined) parts.push(`${context.humidity}% humidity`);
+        document.querySelector('#houseContext').textContent=parts.length?parts.join(' · '):'Home Assistant context has not arrived yet';
+        if(!ambientInitialized) loadAmbient(status.ambient);
+        document.querySelector('#details').textContent=JSON.stringify({house_emotion:status.ambient.emotion,house_mood:status.ambient.mood,why:status.ambient.reason,house_context:status.context,music:status.music,rain:status.rain_simulation,health_issues:status.health_issues,layers:status.layers,active_event:status.active_event,queued_events:status.queued_events,last_event:status.last_event,last_error:status.last_error,output_error:status.output_error,frames_sent:status.frames_sent,deadline_misses:status.deadline_misses,frame_interval_p95_ms:status.frame_interval_p95_ms,receiver_status:status.receiver_status},null,2);
+        draw(frame.frames);
+      } catch(error) { document.querySelector('#health').textContent=error.message; document.querySelector('#health').className='bad'; }
+    }
+    async function action(work, success) {
+      const notice=document.querySelector('#notice');
+      try { await work(); notice.textContent=success; notice.className='notice ok'; await refresh(); }
+      catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    }
+    let powerBusy=false;
+    async function changePower(body) {
+      const notice=document.querySelector('#powerNotice');
+      powerBusy=true;
+      try {
+        await api('/api/power',body);
+        notice.textContent=body.on===false?'Light switched off. Rain and clock events will not turn it back on.':body.on===true?'Light switched on. Current colors and rain settings are preserved.':'Brightness saved for all effects.';
+        notice.className='notice ok';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+      finally { powerBusy=false; await refresh(); }
+    }
+    document.querySelector('#powerOn').onclick=()=>changePower({on:true});
+    document.querySelector('#powerOff').onclick=()=>changePower({on:false});
+    document.querySelector('#masterBrightness').oninput=event=>document.querySelector('#masterBrightnessValue').textContent=`${event.target.value}%`;
+    document.querySelector('#masterBrightness').onchange=event=>changePower({brightness:+event.target.value/100});
+    for(const button of document.querySelectorAll('[data-brightness]')) button.onclick=()=>changePower({brightness:+button.dataset.brightness});
+    async function init() {
+      config=await api('/api/config'); buildDevices();
+      try {
+        musicSetup=await api('/api/music');
+        const route=document.querySelector('#musicRoute'); route.innerHTML='';
+        for(const item of musicSetup.companion?.routes||[]) {
+          const option=document.createElement('option'); option.value=item.id;
+          option.textContent=item.available?item.label:`${item.label} — unavailable (${item.reason||'speaker missing'})`;
+          option.disabled=!item.available; route.appendChild(option);
+          if(item.selected&&item.available) route.value=item.id;
+        }
+        if(!route.options.length) {
+          const option=document.createElement('option'); option.value=''; option.textContent='Laptop helper is offline'; route.appendChild(option);
+        }
+        document.querySelector('#musicNotice').textContent=musicSetup.companion?.available?'Ready. Start playing music after turning this on.':musicSetup.companion?.error||'Laptop helper is offline.';
+      } catch(error) { document.querySelector('#musicNotice').textContent=error.message; document.querySelector('#musicNotice').className='notice bad'; }
+      const preset=document.querySelector('#ambientPreset');
+      for(const name of Object.keys(config.ambient_presets)) {
+        const option=document.createElement('option'); option.value=name;
+        option.textContent=name.charAt(0).toUpperCase()+name.slice(1); preset.appendChild(option);
+      }
+      try {
+        wledSetup=await api('/api/wled');
+        const effects=document.querySelector('#wledEffect'),palettes=document.querySelector('#wledPalette');
+        effects.replaceChildren(...wledSetup.effects.map((name,index)=>new Option(name,String(index))));
+        palettes.replaceChildren(...wledSetup.palettes.map((name,index)=>new Option(name,String(index))));
+        loadWled(wledSetup);
+        document.querySelector('#wledNotice').textContent=`Ready: ${wledSetup.effects.length} effects and ${wledSetup.palettes.length} palettes from ${wledSetup.device}.`;
+      } catch(error) { document.querySelector('#wledNotice').textContent=error.message; document.querySelector('#wledNotice').className='notice bad'; }
+      await refresh(); setInterval(refresh,1000); setInterval(refreshLive,33);
+    }
+    document.querySelector('#setMode').onclick=()=>action(()=>api('/api/mode',{mode:document.querySelector('#mode').value}),'Output mode updated.');
+    async function everyday(work, success) {
+      const notice=document.querySelector('#everydayNotice');
+      try { await work(); notice.textContent=success; notice.className='notice ok'; await refresh(); }
+      catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    }
+    async function toggleMusic() {
+      const notice=document.querySelector('#musicNotice');
+      const enabled=!!status?.music?.enabled;
+      try {
+        if(enabled) {
+          await api('/api/music',{action:'stop',effect:document.querySelector('#musicEffect').value});
+          notice.textContent='Music lights stopped. The living house palette is back.';
+        } else {
+          const route=document.querySelector('#musicRoute').value;
+          if(!route) throw new Error('The laptop helper is offline or no speaker route is available.');
+          notice.textContent='Connecting the speaker, audio capture, and lights…'; notice.className='notice';
+          await api('/api/music',{action:'start',route,...musicSettings()});
+          notice.textContent='Music lights are on. Press play in any music app.';
+        }
+        notice.className='notice ok'; await refresh();
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    }
+    document.querySelector('#liveAutomatically').onclick=()=>everyday(async()=>{
+      if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect});
+      await api('/api/power',{on:true});
+      await api('/api/ambient',{mode:'adaptive',expression:+document.querySelector('#ambientExpression').value});
+    },'The house is choosing from time, weather, sunlight, and presence.');
+    document.querySelector('#resumeAmbient').onclick=()=>everyday(async()=>{ if(status?.music?.enabled) await api('/api/music',{action:'stop',effect:status.music.effect}); await api('/api/power',{on:true}); },'Ambient lighting resumed.');
+    document.querySelector('#startMusic').onclick=toggleMusic;
+    document.querySelector('#musicToggle').onclick=toggleMusic;
+    document.querySelector('#repairMusicRoutes').onclick=async()=>{
+      const notice=document.querySelector('#musicNotice');
+      try {
+        const result=await api('/api/music',{action:'repair'});
+        const routes=result.companion?.routes||[];
+        const repaired=routes.filter(route=>route.available).map(route=>route.label);
+        notice.textContent=repaired.length?`Ready: ${repaired.join(' and ')}. Reload this page to choose it.`:'No saved speaker is connected yet. Wake or connect the AirPods/HomePod, then press this again.';
+        notice.className=repaired.length?'notice ok':'notice';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    };
+    async function updateMusicLook() {
+      if(!status?.music?.enabled) return;
+      await api('/api/music',{action:'effect',...musicSettings()});
+    }
+    document.querySelector('#musicEffect').onchange=updateMusicLook;
+    document.querySelector('#musicSensitivity').oninput=()=>{
+      const value=+document.querySelector('#musicSensitivity').value;
+      document.querySelector('#musicSensitivityLabel').textContent=`${Math.round(value*100)}% · about ${Math.round(value*139)} LEDs`;
+    };
+    document.querySelector('#musicSensitivity').onchange=updateMusicLook;
+    document.querySelector('#musicMotionSpeed').oninput=()=>{
+      document.querySelector('#musicMotionSpeedLabel').textContent=`${Number(document.querySelector('#musicMotionSpeed').value).toFixed(2)}×`;
+    };
+    document.querySelector('#musicMotionSpeed').onchange=updateMusicLook;
+    document.querySelector('#musicColorMode').onchange=async()=>{
+      const custom=document.querySelector('#musicColorMode').value==='custom';
+      document.querySelector('#musicPrimary').disabled=!custom;
+      document.querySelector('#musicAccent').disabled=!custom;
+      await updateMusicLook();
+    };
+    document.querySelector('#musicPrimary').onchange=updateMusicLook;
+    document.querySelector('#musicAccent').onchange=updateMusicLook;
+    document.querySelector('#quietNow').onclick=()=>changePower({on:false});
+    for(const button of document.querySelectorAll('[data-everyday-signal]')) button.onclick=()=>everyday(()=>api('/api/events/signal',{signal:button.dataset.everydaySignal,take_output:true}),`${button.textContent} animation started.`);
+    document.querySelector('#previewHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:false}),'Preview started.');
+    document.querySelector('#runHour').onclick=()=>action(()=>api('/api/events/hour',{hour:+document.querySelector('#hour').value,take_output:true}),'WLED preflight passed. Temporary output started.');
+    document.querySelector('#cancel').onclick=()=>action(()=>api('/api/events/cancel',{}),'Event cancelled and temporary output released.');
+    document.querySelector('#alert').onclick=()=>action(()=>api('/api/events/alert',{color:'#ff351f',duration:6}),'Urgent alert started.');
+    for(const button of document.querySelectorAll('[data-signal]')) button.onclick=()=>action(()=>api('/api/events/signal',{signal:button.dataset.signal,take_output:true}),`${button.textContent} started.`);
+    for(const button of document.querySelectorAll('[data-layer]')) button.onclick=()=>action(()=>api(`/api/layers/${button.dataset.layer}`,{enabled:!status.layers[button.dataset.layer]}),`${button.dataset.layer} layer updated.`);
+    for(const slider of document.querySelectorAll('#manualStudio input[type="range"]')) slider.oninput=updateAmbientLabels;
+    document.querySelector('#ambientExpression').onchange=async()=>{
+      if(status?.ambient?.mode!=='adaptive') return;
+      const notice=document.querySelector('#ambientNotice');
+      try {
+        await api('/api/ambient',{mode:'adaptive',expression:+document.querySelector('#ambientExpression').value});
+        notice.textContent='Emotional expression updated.'; notice.className='notice ok';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    };
+    document.querySelector('#loadPreset').onclick=()=>{
+      const name=document.querySelector('#ambientPreset').value;
+      if(name!=='custom') setPalette(config.ambient_presets[name]);
+    };
+    document.querySelector('#applyAmbient').onclick=async()=>{
+      const notice=document.querySelector('#ambientNotice');
+      try {
+        const palette=[...document.querySelectorAll('#ambientColors input')].map(input=>input.value);
+        const body={mode:'manual',style:'nebula',palette,speed:+document.querySelector('#ambientSpeed').value,cloud_scale:+document.querySelector('#ambientScale').value,saturation:+document.querySelector('#ambientSaturation').value,brightness:+document.querySelector('#ambientBrightness').value};
+        const result=await api('/api/ambient',body); loadAmbient(result.ambient);
+        document.querySelector('#ambientPreset').value='custom';
+        notice.textContent='Nebula settings saved. Smooth transition in progress.'; notice.className='notice ok';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    };
+    document.querySelector('#useAdaptive').onclick=async()=>{
+      const notice=document.querySelector('#ambientNotice');
+      try {
+        const result=await api('/api/ambient',{mode:'adaptive',expression:+document.querySelector('#ambientExpression').value}); loadAmbient(result.ambient);
+        notice.textContent='The house is choosing again. Time and weather will continuously shape the palette.'; notice.className='notice ok';
+      } catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    };
+    for(const slider of document.querySelectorAll('#wledSpeed,#wledIntensity,#wledBrightness')) slider.oninput=updateWledLabels;
+    async function applyWled(body,success) {
+      const notice=document.querySelector('#wledNotice');
+      try { const result=await api('/api/wled',body); loadWled(result.wled); notice.textContent=success; notice.className='notice ok'; await refresh(); }
+      catch(error) { notice.textContent=error.message; notice.className='notice bad'; }
+    }
+    document.querySelector('#applyWled').onclick=()=>applyWled(wledSettings(),'WLED is running this effect. The settings are shown above.');
+    const wledLooks={
+      blobs:{effect:'Blends',palette:'Party',speed:38,intensity:175,brightness:180},
+      colorwaves:{effect:'Colorwaves',palette:'Party',speed:55,intensity:190,brightness:180},
+      aurora:{effect:'Aurora',palette:'Aurora',speed:48,intensity:165,brightness:170},
+      flow:{effect:'Flow',palette:'Lava',speed:42,intensity:185,brightness:180},
+      pacifica:{effect:'Pacifica',palette:'Ocean',speed:52,intensity:175,brightness:165}
+    };
+    for(const button of document.querySelectorAll('[data-wled-look]')) button.onclick=()=>applyWled({on:true,...wledLooks[button.dataset.wledLook]},`${button.textContent} is running directly in WLED.`);
+    document.querySelector('#resumeHouse').onclick=()=>document.querySelector('#liveAutomatically').click();
+    document.querySelector('#ambientMode').onchange=()=>{
+      if(document.querySelector('#ambientMode').value==='adaptive') document.querySelector('#useAdaptive').click();
+      else document.querySelector('#ambientNotice').textContent='Choose a look or adjust the colors, then select “Use these manual colors.”';
+      if(document.querySelector('#ambientMode').value==='manual') document.querySelector('#manualStudio').open=true;
+    };
+    document.querySelector('#copyAddress').onclick=async()=>{
+      await navigator.clipboard.writeText('http://raspberrypi.local:8090');
+      document.querySelector('#phoneNotice').textContent='Phone address copied.';
+    };
+    if(location.protocol==='file:') {
+      document.body.innerHTML=`<div class="source-warning"><h1>This is the project file, not the live house</h1><p>This copy cannot talk to the Pi or WLED. Open the live controller instead.</p><p><a href="http://raspberrypi.local:8090" style="color:var(--cyan);font-size:18px">Open Living House Lights</a></p><p style="color:var(--muted)">Bookmark that address on the laptop, or add it to your phone's Home Screen.</p></div>`;
+    } else {
+      init();
+    }
+  </script>
+</body>
+</html>

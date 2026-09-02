@@ -1,0 +1,292 @@
+"""Local HTTP API and browser simulator for the ambient renderer."""
+
+from __future__ import annotations
+
+import json
+import logging
+import socket
+import threading
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+from .color import parse_hex
+from .engine import RendererEngine
+from .engine import AMBIENT_PRESETS
+
+
+LOGGER = logging.getLogger(__name__)
+STATIC_DIR = Path(__file__).parents[1] / "static"
+
+
+class RendererHTTPServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], engine: RendererEngine) -> None:
+        super().__init__(address, RendererHandler)
+        self.engine = engine
+        self.audio_stop = threading.Event()
+        self.audio_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.audio_socket.settimeout(0.5)
+        self.audio_socket.bind((address[0], address[1] + 2))
+        self.audio_thread = threading.Thread(target=self._receive_audio, name="music-feature-udp", daemon=True)
+        self.audio_thread.start()
+
+    def _receive_audio(self) -> None:
+        while not self.audio_stop.is_set():
+            try:
+                payload, _source = self.audio_socket.recvfrom(4096)
+                value = json.loads(payload.decode("utf-8"))
+                if isinstance(value, dict):
+                    self.engine.update_audio(value)
+            except socket.timeout:
+                continue
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
+                LOGGER.debug("discarded invalid UDP audio feature packet", exc_info=True)
+
+    def server_close(self) -> None:
+        self.audio_stop.set()
+        self.audio_socket.close()
+        self.audio_thread.join(timeout=1)
+        super().server_close()
+
+
+class RendererHandler(BaseHTTPRequestHandler):
+    server: RendererHTTPServer
+
+    def log_message(self, message: str, *args: Any) -> None:
+        LOGGER.debug("%s - %s", self.address_string(), message % args)
+
+    def do_GET(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if path in {"/", "/index.html"}:
+            self._file(STATIC_DIR / "index.html", "text/html; charset=utf-8")
+        elif path == "/manifest.json":
+            self._file(STATIC_DIR / "manifest.json", "application/manifest+json")
+        elif path == "/api/status":
+            self._json(self.server.engine.status())
+        elif path == "/api/frame":
+            self._json({"frames": self.server.engine.frame_snapshot()})
+        elif path == "/api/audio":
+            self._json(self.server.engine.music_status())
+        elif path == "/api/power":
+            self._json(self.server.engine.power_status())
+        elif path == "/api/live":
+            self._json({
+                "music": self.server.engine.music_status(),
+                "frames": self.server.engine.frame_snapshot(),
+            })
+        elif path == "/api/config":
+            status = self.server.engine.status()
+            self._json({
+                "devices": status["devices"],
+                "fps": status["fps_target"],
+                "ambient_presets": AMBIENT_PRESETS,
+                "music_companion_url": self.server.engine.music_companion_url,
+            })
+        elif path == "/api/ambient":
+            self._json(self.server.engine.status()["ambient"])
+        elif path == "/api/wled":
+            self._json(self.server.engine.native_wled_status())
+        elif path == "/api/music":
+            music = self.server.engine.music_status()
+            try:
+                companion = self._companion("/api/status")
+            except ValueError as exc:
+                companion = {"available": False, "error": str(exc), "routes": []}
+            self._json({**music, "companion": companion})
+        elif path == "/api/context":
+            self._json(self.server.engine.status()["context"])
+        elif path == "/health":
+            status = self.server.engine.status()
+            self._json({"ok": status["ok"], "mode": status["mode"]})
+        else:
+            self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        try:
+            body = self._body()
+            if path == "/api/power":
+                unknown = set(body) - {"on", "brightness", "morning"}
+                if unknown:
+                    raise ValueError("unknown power settings: " + ", ".join(sorted(unknown)))
+                self._json({"ok": True, "power": self.server.engine.set_power(**body)})
+            elif path == "/api/events/hour":
+                hour = int(body.get("hour", 0))
+                if not 0 <= hour <= 23:
+                    raise ValueError("hour must be between 0 and 23")
+                take_output = body.get("take_output", False)
+                if not isinstance(take_output, bool):
+                    raise ValueError("take_output must be true or false")
+                self._json(
+                    self.server.engine.trigger_hour(
+                        hour,
+                        take_output=take_output,
+                        targets=self._targets(body),
+                    ),
+                    HTTPStatus.ACCEPTED,
+                )
+            elif path == "/api/events/alert":
+                color = parse_hex(str(body.get("color", "#ff280f")))
+                duration = float(body.get("duration", 6))
+                self._json(
+                    self.server.engine.trigger_alert(color, duration, self._targets(body)),
+                    HTTPStatus.ACCEPTED,
+                )
+            elif path == "/api/events/signal":
+                signal = str(body.get("signal", ""))
+                duration = body.get("duration")
+                duration = float(duration) if duration is not None else None
+                take_output = body.get("take_output", False)
+                if not isinstance(take_output, bool):
+                    raise ValueError("take_output must be true or false")
+                self._json(
+                    self.server.engine.trigger_signal(
+                        signal,
+                        duration=duration,
+                        take_output=take_output,
+                        targets=self._targets(body),
+                    ),
+                    HTTPStatus.ACCEPTED,
+                )
+            elif path == "/api/events/cancel":
+                self.server.engine.cancel_event()
+                self._json({"ok": True})
+            elif path.startswith("/api/layers/"):
+                name = path.rsplit("/", 1)[-1]
+                enabled = body.get("enabled", False)
+                if not isinstance(enabled, bool):
+                    raise ValueError("enabled must be true or false")
+                self.server.engine.set_layer(name, enabled, self._targets(body))
+                self._json({"ok": True, "layer": name, "enabled": enabled})
+            elif path == "/api/mode":
+                self.server.engine.set_mode(str(body.get("mode", "preview")))
+                self._json({"ok": True, "mode": self.server.engine.status()["mode"]})
+            elif path == "/api/music/register":
+                url = self.server.engine.register_music_companion(
+                    self.client_address[0], int(body.get("port", 8091))
+                )
+                self._json({"ok": True, "url": url})
+            elif path == "/api/audio":
+                self._json({"ok": True, "music": self.server.engine.update_audio(body)})
+            elif path == "/api/music":
+                action = str(body.get("action", ""))
+                effect = str(body.get("effect", "meter"))
+                background = body.get("background")
+                sensitivity = body.get("sensitivity")
+                color_mode = body.get("color_mode")
+                primary = parse_hex(str(body["primary"])) if "primary" in body else None
+                accent = parse_hex(str(body["accent"])) if "accent" in body else None
+                motion_speed = body.get("motion_speed")
+                if action == "start":
+                    route = str(body.get("route", "")).strip()
+                    if not route:
+                        raise ValueError("choose a speaker route")
+                    companion = self._companion(
+                        "/api/start",
+                        {"route": route, "effect": effect},
+                    )
+                    music = self.server.engine.set_music(
+                        True, effect, background, sensitivity, color_mode, primary, accent, motion_speed
+                    )
+                elif action == "stop":
+                    self.server.engine.set_music(False, effect)
+                    try:
+                        companion = self._companion("/api/stop", {})
+                    except ValueError as exc:
+                        companion = {"available": False, "error": str(exc)}
+                    music = self.server.engine.music_status()
+                elif action == "effect":
+                    music = self.server.engine.set_music(
+                        True, effect, background, sensitivity, color_mode, primary, accent, motion_speed
+                    )
+                    companion = {"available": True}
+                elif action == "repair":
+                    companion = self._companion("/api/repair", {})
+                    music = self.server.engine.music_status()
+                else:
+                    raise ValueError("music action must be start, stop, effect, or repair")
+                self._json({"ok": True, "music": music, "companion": companion})
+            elif path == "/api/ambient":
+                self._json({"ok": True, "ambient": self.server.engine.set_ambient(body)})
+            elif path == "/api/wled":
+                self._json({"ok": True, "wled": self.server.engine.set_native_wled(body)})
+            elif path == "/api/context":
+                self._json({"ok": True, "context": self.server.engine.set_context(body)})
+            else:
+                self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _companion(self, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        base = self.server.engine.music_companion_url
+        if not base:
+            raise ValueError("music companion is not configured")
+        payload = None if body is None else json.dumps(body).encode("utf-8")
+        request = Request(
+            base + path,
+            data=payload,
+            headers={"Content-Type": "application/json"} if payload is not None else {},
+            method="POST" if payload is not None else "GET",
+        )
+        try:
+            with urlopen(request, timeout=4.0) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            message = exc.read().decode("utf-8", errors="replace")
+            try:
+                detail = json.loads(message).get("error", message)
+            except json.JSONDecodeError:
+                detail = message
+            raise ValueError(f"laptop music helper: {detail}") from exc
+        except (URLError, TimeoutError, OSError) as exc:
+            raise ValueError(
+                "the laptop music helper is offline; wake the laptop or reinstall its login service"
+            ) from exc
+        if not isinstance(result, dict):
+            raise ValueError("laptop music helper returned an invalid response")
+        return result
+
+    def _body(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length > 65536:
+            raise ValueError("request body is too large")
+        if not length:
+            return {}
+        return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    @staticmethod
+    def _targets(body: dict[str, Any]) -> list[str] | None:
+        targets = body.get("targets")
+        if targets is None:
+            return None
+        if not isinstance(targets, list) or not all(isinstance(item, str) for item in targets):
+            raise ValueError("targets must be a list of device or lane IDs")
+        return targets
+
+    def _json(self, value: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
+        payload = json.dumps(value, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _file(self, path: Path, content_type: str) -> None:
+        try:
+            payload = path.read_bytes()
+        except OSError:
+            self._json({"error": "simulator asset not found"}, HTTPStatus.NOT_FOUND)
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(payload)

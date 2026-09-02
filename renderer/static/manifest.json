@@ -1,0 +1,9 @@
+{
+  "name": "Living House Lights",
+  "short_name": "House Lights",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#090c11",
+  "theme_color": "#10143f",
+  "description": "Control the home's layered ambient LED display."
+}

@@ -1,0 +1,14 @@
+services:
+  ambient-renderer:
+    build: ./renderer
+    container_name: ambient-renderer
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+      - "8092:8092/udp"
+    volumes:
+      - ./renderer-config.json:/config/renderer.json:ro
+      - ambient-renderer-data:/data
+
+volumes:
+  ambient-renderer-data:

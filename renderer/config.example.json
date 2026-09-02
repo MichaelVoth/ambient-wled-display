@@ -1,0 +1,40 @@
+{
+  "fps": 30,
+  "output_enabled": false,
+  "palette": ["#06142e", "#075f73", "#42a6a1", "#bac7bd"],
+  "palette_speed": 0.018,
+  "cloud_scale": 1.0,
+  "saturation": 1.0,
+  "ambient_brightness": 1.0,
+  "log_path": "/data/ambient-renderer.jsonl",
+  "settings_path": "/data/ambient-settings.json",
+  "devices": [
+    {
+      "id": "office-wall",
+      "name": "Office Wall",
+      "host": "wled.local",
+      "pixel_count": 278,
+      "transport": "udp_realtime",
+      "realtime_port": 21324,
+      "realtime_timeout": 2,
+      "ddp_port": 4048,
+      "brightness": 0.5,
+      "lanes": [
+        {
+          "id": "office-wall-a",
+          "name": "Wall strip A",
+          "start": 0,
+          "length": 139,
+          "top_at_high_index": true
+        },
+        {
+          "id": "office-wall-b",
+          "name": "Wall strip B",
+          "start": 139,
+          "length": 139,
+          "top_at_high_index": true
+        }
+      ]
+    }
+  ]
+}

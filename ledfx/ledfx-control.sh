@@ -5,8 +5,21 @@ LEDFX_URL="${LEDFX_URL:-http://127.0.0.1:8889}"
 LEDFX_CONFIG_DIR="${LEDFX_CONFIG_DIR:-$HOME/.ledfx}"
 LEDFX_VIRTUAL_ID="${LEDFX_VIRTUAL_ID:-office-wled}"
 LEDFX_AUDIO_DEVICE_MATCH="${LEDFX_AUDIO_DEVICE_MATCH:-BlackHole 2ch}"
+AMBIENT_RENDERER_URL="${AMBIENT_RENDERER_URL:-http://raspberrypi.local:8090}"
+AMBIENT_RENDERER_IDLE_MODE="${AMBIENT_RENDERER_IDLE_MODE:-renderer}"
 
 api_ready() { curl --silent --fail "${LEDFX_URL%/}/api/info" >/dev/null 2>&1; }
+
+renderer_mode() {
+  local mode="$1"
+  if curl --silent --fail --max-time 3 -X POST -H 'Content-Type: application/json' \
+    --data "{\"mode\":\"${mode}\"}" "${AMBIENT_RENDERER_URL%/}/api/mode" >/dev/null; then
+    printf 'Ambient renderer mode: %s\n' "$mode"
+  else
+    printf 'Warning: ambient renderer was not reachable at %s; verify output ownership manually.\n' \
+      "$AMBIENT_RENDERER_URL" >&2
+  fi
+}
 
 find_app() {
   if [[ -n "${LEDFX_APP:-}" && -d "$LEDFX_APP" ]]; then printf '%s\n' "$LEDFX_APP"; return; fi
@@ -40,6 +53,7 @@ start_ledfx() {
   fi
   api_ready || { printf 'LedFx did not become ready at %s\n' "$LEDFX_URL" >&2; exit 1; }
   select_audio_device
+  renderer_mode music
   printf 'LedFx is ready at %s\n' "$LEDFX_URL"
 }
 
@@ -60,6 +74,7 @@ case "${1:-help}" in
     effect="$(curl --silent --fail "${LEDFX_URL%/}/api/virtuals/${LEDFX_VIRTUAL_ID}/effects" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("effect") or {}).get("type", ""))')"
     [[ -z "$effect" ]] || curl --silent --fail -X POST -H 'Content-Type: application/json' \
       --data "{\"type\":\"${effect}\"}" "${LEDFX_URL%/}/api/virtuals/${LEDFX_VIRTUAL_ID}/effects/delete" >/dev/null
+    renderer_mode "$AMBIENT_RENDERER_IDLE_MODE"
     ;;
   status) api_ready && printf 'LedFx is running.\n' || { printf 'LedFx is stopped.\n'; exit 1; } ;;
   *) printf 'Usage: %s {start|energy|spectrum|wavelength|status|stop}\n' "$0" ;;

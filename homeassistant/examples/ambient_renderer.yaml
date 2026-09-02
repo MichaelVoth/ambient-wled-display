@@ -1,0 +1,334 @@
+# Local REST bridge from Home Assistant to the central ambient renderer.
+# Change the host if the renderer does not run on the same Pi.
+
+rest_command:
+  ambient_renderer_power:
+    url: "http://127.0.0.1:8090/api/power"
+    method: POST
+    content_type: application/json
+    payload: '{"on": {{ power_on | bool | lower }}}'
+
+  ambient_renderer_morning:
+    url: "http://127.0.0.1:8090/api/power"
+    method: POST
+    content_type: application/json
+    payload: '{"on": true, "morning": true}'
+  ambient_renderer_hour:
+    url: "http://127.0.0.1:8090/api/events/hour"
+    method: POST
+    content_type: application/json
+    payload: '{"hour": {{ hour | int }}, "take_output": {{ take_output | default(false) | bool | lower }}}'
+
+  ambient_renderer_layer:
+    url: "http://127.0.0.1:8090/api/layers/{{ layer }}"
+    method: POST
+    content_type: application/json
+    payload: '{"enabled": {{ enabled | bool | lower }}}'
+
+  ambient_renderer_signal:
+    url: "http://127.0.0.1:8090/api/events/signal"
+    method: POST
+    content_type: application/json
+    payload: >-
+      {"signal": "{{ signal }}",
+       "take_output": {{ take_output | default(false) | bool | lower }}}
+
+  ambient_renderer_look:
+    url: "http://127.0.0.1:8090/api/ambient"
+    method: POST
+    content_type: application/json
+    payload: '{"preset": "{{ preset }}"}'
+
+  ambient_renderer_adaptive:
+    url: "http://127.0.0.1:8090/api/ambient"
+    method: POST
+    content_type: application/json
+    payload: '{"mode":"adaptive"}'
+
+  ambient_renderer_context:
+    url: "http://127.0.0.1:8090/api/context"
+    method: POST
+    content_type: application/json
+    payload: >-
+      {"weather": {{ states('weather.home') | tojson }},
+       "temperature": {{ state_attr('weather.home', 'temperature') | default(none, true) | tojson }},
+       "temperature_unit": {{ state_attr('weather.home', 'temperature_unit') | default('°F', true) | tojson }},
+       "humidity": {{ state_attr('weather.home', 'humidity') | default(none, true) | tojson }},
+       "cloud_coverage": {{ state_attr('weather.home', 'cloud_coverage') | default(none, true) | tojson }},
+       "wind_speed": {{ state_attr('weather.home', 'wind_speed') | default(none, true) | tojson }},
+       "sun_elevation": {{ state_attr('sun.sun', 'elevation') | default(none, true) | tojson }},
+       "presence": {{ states('person.michael_voth') | tojson }},
+       "timezone": "America/Los_Angeles"}
+
+  ambient_renderer_mode:
+    url: "http://127.0.0.1:8090/api/mode"
+    method: POST
+    content_type: application/json
+    payload: '{"mode": "{{ mode }}"}'
+
+rest:
+  - resource: "http://127.0.0.1:8090/api/status"
+    scan_interval: 15
+    sensor:
+      - name: Ambient Renderer
+        unique_id: ambient_renderer_status
+        value_template: "{{ value_json.mode }}"
+        json_attributes:
+          - ok
+          - fps_average
+          - frames_sent
+          - layers
+          - active_event
+          - last_event
+          - last_error
+          - output_error
+          - health_issues
+          - fps_recent
+          - deadline_misses
+          - receiver_status
+          - ambient
+          - context
+          - rain_simulation
+
+script:
+  ambient_renderer_test_hour:
+    alias: Ambient Renderer Test Hour
+    mode: restart
+    fields:
+      hour:
+        required: true
+        selector:
+          number:
+            min: 0
+            max: 23
+    sequence:
+      - action: rest_command.ambient_renderer_hour
+        data:
+          hour: "{{ hour | int }}"
+          take_output: true
+
+  ambient_renderer_work_celebration:
+    alias: Ambient Renderer Work Celebration
+    mode: restart
+    sequence:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: celebration
+          take_output: true
+
+  ambient_renderer_lunch_reminder:
+    alias: Ambient Renderer Lunch Reminder
+    mode: restart
+    sequence:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: reminder
+          take_output: true
+
+  ambient_renderer_success:
+    alias: Ambient Renderer Success Wave
+    mode: restart
+    sequence:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: success
+          take_output: true
+
+  ambient_renderer_warning:
+    alias: Ambient Renderer Warning Pulse
+    mode: restart
+    sequence:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: warning
+          take_output: true
+
+automation:
+  # Replace the old morning/startup preset automations with this one; do not
+  # leave a second automation writing WLED presets after these power commands.
+  - id: ambient_renderer_morning_power
+    alias: Ambient Renderer Morning On
+    triggers:
+      - trigger: time
+        at: "06:00:00"
+      - trigger: homeassistant
+        event: start
+      - trigger: time_pattern
+        minutes: "/5"
+    conditions:
+      - condition: template
+        value_template: "{{ now().hour >= 6 }}"
+    actions:
+      - action: rest_command.ambient_renderer_morning
+    mode: single
+
+  - id: ambient_renderer_midnight_power
+    alias: Ambient Renderer Midnight Off
+    triggers:
+      - trigger: time
+        at: "00:00:00"
+    actions:
+      - action: rest_command.ambient_renderer_power
+        data:
+          power_on: false
+    mode: single
+
+  - id: ambient_renderer_house_context
+    alias: Ambient Renderer House Context
+    triggers:
+      - trigger: homeassistant
+        event: start
+      - trigger: state
+        entity_id: weather.home
+      - trigger: state
+        entity_id:
+          - sun.sun
+          - person.michael_voth
+      - trigger: time_pattern
+        minutes: "/10"
+    actions:
+      - delay: "00:00:05"
+      - action: rest_command.ambient_renderer_context
+    mode: restart
+
+  - id: ambient_renderer_welcome_home
+    alias: Ambient Renderer Welcome Home
+    triggers:
+      - trigger: state
+        entity_id: person.michael_voth
+        to: home
+    actions:
+      - action: rest_command.ambient_renderer_mode
+        data:
+          mode: renderer
+      - delay: "00:00:01"
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: welcome
+          take_output: false
+    mode: restart
+
+  - id: ambient_renderer_hourly_clock
+    alias: Ambient Renderer Hourly Clock
+    triggers:
+      - trigger: time_pattern
+        minutes: "0"
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ is_state('sensor.ambient_renderer', 'renderer')
+             or is_state('light.wled_main', 'on') }}
+      - condition: template
+        value_template: >-
+          {{ now().hour not in [0, 6]
+             and not (now().weekday() in [1, 2, 3, 4] and now().hour == 16) }}
+    actions:
+      - action: rest_command.ambient_renderer_hour
+        data:
+          hour: "{{ now().hour }}"
+          take_output: true
+    mode: single
+
+  - id: ambient_renderer_end_of_workday
+    alias: Ambient Renderer End of Workday
+    triggers:
+      - trigger: time
+        at: "16:00:00"
+    conditions:
+      - condition: time
+        weekday: [tue, wed, thu, fri]
+    actions:
+      - action: script.ambient_renderer_work_celebration
+    mode: single
+
+  - id: ambient_renderer_lunch_reminders
+    alias: Ambient Renderer Lunch Reminders
+    triggers:
+      - trigger: time
+        at: "12:01:00"
+      - trigger: time
+        at: "12:10:00"
+      - trigger: time
+        at: "12:20:00"
+    conditions:
+      - condition: time
+        weekday: [mon, tue, wed, thu, fri]
+    actions:
+      - action: script.ambient_renderer_lunch_reminder
+    mode: single
+
+  - id: ambient_renderer_rain_start
+    alias: Ambient Renderer Rain Start
+    triggers:
+      - trigger: state
+        entity_id: weather.home
+        to: [rainy, pouring, lightning-rainy, snowy-rainy, hail]
+        for: "00:05:00"
+    actions:
+      - action: rest_command.ambient_renderer_layer
+        data:
+          layer: rain
+          enabled: true
+    mode: restart
+
+  - id: ambient_renderer_rain_stop
+    alias: Ambient Renderer Rain Stop
+    triggers:
+      - trigger: state
+        entity_id: weather.home
+        from: [rainy, pouring, lightning-rainy, snowy-rainy, hail]
+        for: "00:20:00"
+    actions:
+      - action: rest_command.ambient_renderer_layer
+        data:
+          layer: rain
+          enabled: false
+    mode: restart
+
+  - id: ambient_renderer_lightning
+    alias: Ambient Renderer Lightning
+    triggers:
+      - trigger: state
+        entity_id: weather.home
+        to: lightning-rainy
+    actions:
+      - action: rest_command.ambient_renderer_signal
+        data:
+          signal: storm
+          take_output: true
+    mode: restart
+
+  - id: ambient_renderer_service_warning
+    alias: Ambient Renderer Service Warning
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.pi_hole_status
+        to: "off"
+        for: "00:00:20"
+    actions:
+      - action: script.ambient_renderer_warning
+    mode: restart
+
+  - id: ambient_renderer_high_energy_warning
+    alias: Ambient Renderer High Energy Warning
+    triggers:
+      - trigger: time
+        at: "10:30:00"
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.pse_high_usage_day
+        state: "on"
+    actions:
+      - action: script.ambient_renderer_warning
+    mode: single
+
+  - id: ambient_renderer_github_build_failed
+    alias: Ambient Renderer GitHub Build Failed
+    triggers:
+      - trigger: webhook
+        webhook_id: !secret ambient_wled_github_webhook_id
+        allowed_methods: [POST]
+        local_only: false
+    actions:
+      - action: script.ambient_renderer_warning
+    mode: restart
